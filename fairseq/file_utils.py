@@ -51,10 +51,10 @@ WEIGHTS_NAME = "pytorch_model.bin"
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
-def load_archive_file(archive_file):
+def load_archive_file(archive_file, cache_dir = None):
     # redirect to the cache, if necessary
     try:
-        resolved_archive_file = cached_path(archive_file, cache_dir=None)
+        resolved_archive_file = cached_path(archive_file, cache_dir = cache_dir)
     except EnvironmentError:
         logger.info(
             "Archive name '{}' was not found in archive name list. "

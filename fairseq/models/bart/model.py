@@ -121,6 +121,7 @@ class BARTModel(TransformerModel):
         data_name_or_path=".",
         bpe="gpt2",
         sample_break_mode="eos",
+        cache_dir = cache_dir,
         **kwargs,
     ):
         from fairseq import hub_utils
@@ -133,6 +134,7 @@ class BARTModel(TransformerModel):
             bpe=bpe,
             load_checkpoint_heads=True,
             sample_break_mode=sample_break_mode,
+            cache_dir = cache_dir,
             **kwargs,
         )
         return BARTHubInterface(x["args"], x["task"], x["models"][0])

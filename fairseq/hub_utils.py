@@ -25,6 +25,7 @@ def from_pretrained(
     checkpoint_file="model.pt",
     data_name_or_path=".",
     archive_map=None,
+    cache_dir = cache_dir,
     **kwargs
 ):
     from fairseq import checkpoint_utils, file_utils
@@ -49,7 +50,7 @@ def from_pretrained(
                     kwargs[k] = v
             model_name_or_path = model_name_or_path["path"]
 
-    model_path = file_utils.load_archive_file(model_name_or_path)
+    model_path = file_utils.load_archive_file(model_name_or_path, cache_dir = cache_dir)
 
     # convenience hack for loading data and BPE codes from model archive
     if data_name_or_path.startswith("."):
