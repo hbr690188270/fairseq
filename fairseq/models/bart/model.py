@@ -121,7 +121,7 @@ class BARTModel(TransformerModel):
         data_name_or_path=".",
         bpe="gpt2",
         sample_break_mode="eos",
-        cache_dir = cache_dir,
+        cache_dir = None,
         **kwargs,
     ):
         from fairseq import hub_utils

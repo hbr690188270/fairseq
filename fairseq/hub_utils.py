@@ -25,7 +25,7 @@ def from_pretrained(
     checkpoint_file="model.pt",
     data_name_or_path=".",
     archive_map=None,
-    cache_dir = cache_dir,
+    cache_dir = None,
     **kwargs
 ):
     from fairseq import checkpoint_utils, file_utils
