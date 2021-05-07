@@ -525,14 +525,25 @@ class SpeechToTextDataset2(FairseqDataset):
         self.pre_tokenizer = None
         self.bpe_tokenizer = None
         self.prepend_bos = prepend_bos
+        if self.split == 'train':
+            self.shufful = True
+        else:
+            self.shufful = False
     
     def read_sound_file(self,):
         audio_name_list = []
         audio_list = []
         fr_text_list = []
+        max_value = 1000
+
+        count = 0
         with open(self.meta_file,'r',encoding = 'utf-8') as f:
             next(f)
             for line in f:
+                count += 1
+                if count >= max_value:
+                    break
+
                 book_id, chap_id, reader_id, _, audio_name, duration = line.strip().split('\t',5)
                 audio_name_list.append(audio_name)
 

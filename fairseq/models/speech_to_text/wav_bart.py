@@ -13,6 +13,24 @@ from transformers import Wav2Vec2Tokenizer, Wav2Vec2ForCTC, BartForConditionalGe
 from fairseq.optim import adam
 from torch.optim import AdamW
 
+
+def get_bart_hubs():
+    return {
+            "bart.base": "http://dl.fbaipublicfiles.com/fairseq/models/bart.base.tar.gz",
+            "bart.large": "http://dl.fbaipublicfiles.com/fairseq/models/bart.large.tar.gz",
+            "bart.large.mnli": "http://dl.fbaipublicfiles.com/fairseq/models/bart.large.mnli.tar.gz",
+            "bart.large.cnn": "http://dl.fbaipublicfiles.com/fairseq/models/bart.large.cnn.tar.gz",
+            "bart.large.xsum": "http://dl.fbaipublicfiles.com/fairseq/models/bart.large.xsum.tar.gz",
+        }
+
+def get_wav2vec2_hubs():
+    return {
+        'wav2vec2.base':'https://dl.fbaipublicfiles.com/fairseq/wav2vec/wav2vec_small.pt',
+        # 'wav2vec2.base':'http://dl.fbaipublicfiles.com/fairseq/models/wav2vec_small.tar.gz',
+
+        'wav2vec2.large':'https://dl.fbaipublicfiles.com/fairseq/wav2vec/wav2vec_vox_new.pt'
+    }
+
 class ASRModel(nn.Module):
     def __init__(self, wav2vec2_model_type = 'wav2vec2.base',bart_model_type = 'bart.base', 
                     wav2vec2_cache_dir = '/data/private/houbairu/model_cache/wav2vec_model/',
@@ -20,7 +38,8 @@ class ASRModel(nn.Module):
                     word_dictionary = None,
                     wav2vec2_output_dim = 768, bart_hidden_dim = 768,
                     decode_max_length = 50,
-                    device = torch.device('cuda')
+                    device = torch.device('cuda'),
+                    vocab_size = 10000,
                     ):
         '''
         word_dictionary: fairseq.data.dictionary.Dictionary
@@ -36,13 +55,12 @@ class ASRModel(nn.Module):
         self.bart_hidden_dim = bart_hidden_dim
 
         self.word_dictionary = word_dictionary
-        self.vocab_size = len(self.word_dictionary)
+        self.vocab_size = vocab_size
         self.decode_max_length = decode_max_length
 
         self.device = device
 
         # self.load_bart_decoder()
-        self.tokenizer = ASRTokenizer()
         self.wav2vec_encoder = self.load_wav2vec_encoder().to(self.device)
         self.bart_decoder = self.load_bart_decoder().to(self.device)
 

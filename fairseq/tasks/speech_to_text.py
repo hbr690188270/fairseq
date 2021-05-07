@@ -182,11 +182,11 @@ class SpeechToTextTask2(LegacyFairseqTask):
     def build_criterion(self, args):
         from fairseq import criterions
 
-        if self.data_cfg.prepend_tgt_lang_tag and args.ignore_prefix_size != 1:
-            raise ValueError(
-                'Please set "--ignore-prefix-size 1" since '
-                "target language ID token is prepended as BOS."
-            )
+        # if self.data_cfg.prepend_tgt_lang_tag and args.ignore_prefix_size != 1:
+        #     raise ValueError(
+        #         'Please set "--ignore-prefix-size 1" since '
+        #         "target language ID token is prepended as BOS."
+        #     )
         return criterions.build_criterion(args, self)
 
     def load_dataset(self, split, epoch=1, combine=False, **kwargs):
@@ -207,8 +207,8 @@ class SpeechToTextTask2(LegacyFairseqTask):
     def max_positions(self):
         return self.args.max_source_positions, self.args.max_target_positions
 
-    def build_model(self, args):
-        return ASRModel()
+    def build_model(self, args, vocab_size):
+        return ASRModel(vocab_size = vocab_size)
 
     def build_generator(
         self,

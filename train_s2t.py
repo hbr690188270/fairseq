@@ -41,10 +41,13 @@ def main(args):
     # task = tasks.setup_task(args)
 
     # Load dataset splits
-    load_dataset_splits(task, ['train', 'valid', 'test'])
+    load_dataset_splits(task, ['train', 'dev', 'test'])
 
     # Build model and criterion
-    model = task.build_model(args)
+    tgt_dict = task.tgt_dict
+    vocab_size = len(task.tgt_dict)
+
+    model = task.build_model(args, vocab_size)
     criterion = task.build_criterion(args)
     print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
@@ -52,10 +55,11 @@ def main(args):
     # Make a dummy batch to (i) warm the caching allocator and (ii) as a
     # placeholder DistributedDataParallel when there's an uneven number of
     # batches per worker.
-    max_positions = utils.resolve_max_positions(
-        task.max_positions(),
-        model.max_positions(),
-    )
+    # max_positions = utils.resolve_max_positions(
+    #     task.max_positions(),
+    #     model.max_positions(),
+    # )
+    max_positions = None
     # dummy_batch = task.dataset('train').get_dummy_batch(args.max_tokens, max_positions)
 
     # Build trainer
@@ -354,6 +358,7 @@ def load_dataset_splits(task, splits):
 
 if __name__ == '__main__':
     parser = options.get_training_parser()
+    parser.add_argument('--max_sentences', type = int, default = 5)
     # args = options.parse_args_and_arch(parser)
     args = parser.parse_args()
     if args.distributed_port > 0 or args.distributed_init_method is not None:
