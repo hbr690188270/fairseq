@@ -21,7 +21,7 @@ from fairseq.data import (
 )
 from fairseq.data.audio.audio_utils import get_fbank, get_waveform
 from fairseq.data.audio.feature_transforms import CompositeAudioFeatureTransform
-
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,28 @@ def _collate_frames(
         3D tensor of size len(frames)*len_max*f_dim where len_max is max of L[i]
     """
     max_len = max(frame.size(0) for frame in frames)
+    if is_audio_input:
+        out = frames[0].new_zeros((len(frames), max_len))
+    else:
+        out = frames[0].new_zeros((len(frames), max_len, frames[0].size(1)))
+    for i, v in enumerate(frames):
+        out[i, : v.size(0)] = v
+    return out
+
+
+def _collate_frames2(
+    frames: List[torch.Tensor], is_audio_input: bool = False, max_len = None
+) -> torch.Tensor:
+    """
+    Convert a list of 2D frames into a padded 3D tensor
+    Args:
+        frames (list): list of 2D frames of size L[i]*f_dim. Where L[i] is
+            length of i-th frame and f_dim is static dimension of features
+    Returns:
+        3D tensor of size len(frames)*len_max*f_dim where len_max is max of L[i]
+    """
+    if max_len == None:
+        max_len = max(frame.size(0) for frame in frames)
     if is_audio_input:
         out = frames[0].new_zeros((len(frames), max_len))
     else:
@@ -398,6 +420,222 @@ class SpeechToTextDataset(FairseqDataset):
 
     def prefetch(self, indices):
         raise False
+
+
+
+class ASRTokenizer():
+    def __init__(self, 
+        bos_token="<s>",
+        eos_token="</s>",
+        unk_token="<unk>",
+        pad_token="<pad>",
+        word_delimiter_token="|",
+        do_normalize=False,
+        return_attention_mask=False,
+        max_length = 16000*15.6,
+        do_lower_case = False,
+        ):
+
+        self._word_delimiter_token = word_delimiter_token
+
+        self.do_lower_case = do_lower_case
+        self.return_attention_mask = return_attention_mask
+        self.do_normalize = do_normalize
+        self.max_length = max_length
+
+
+    def __call__(self, 
+        raw_speech,
+        padding,
+        max_length,
+        pad_to_multiple_of = None,
+        return_tensors = False,
+    ):
+
+        is_batched = bool(
+            isinstance(raw_speech, (list, tuple))
+            and (isinstance(raw_speech[0], np.ndarray) or isinstance(raw_speech[0], (tuple, list)))
+        )
+
+        # make sure input is in list format
+        if is_batched and not isinstance(raw_speech[0], np.ndarray):
+            raw_speech = [np.asarray(speech) for speech in raw_speech]
+        elif not is_batched and not isinstance(raw_speech, np.ndarray):
+            raw_speech = np.asarray(raw_speech)
+
+        # always return batch
+        if not is_batched:
+            raw_speech = [raw_speech]
+        
+        if self.do_normalize:
+            raw_speech = [(x - np.mean(x)) / np.sqrt(np.var(x) + 1e-5) for x in raw_speech]
+
+        batchencoding = {
+            'input_values':raw_speech,
+        }
+        padding_inputs = self.pad(batchencoding, padding = True, max_length = self.max_length)
+        return padding_inputs
+    
+    def pad(self, encoded_inputs,
+        padding = True,
+        max_length = None,
+        return_attention_mask = None,
+        return_tensors = None,
+        verbose: bool = True,):
+        
+        input_values = encoded_inputs['input_values']
+        pad_values = []
+        attention_masks = []
+        for i in range(len(input_values)):
+            input_array = input_values[i]
+            if len(input_array) < max_length:
+                attention_mask = [0] * len(input_array) + [1] * (max_length - len(input_array))
+                input_array = np.concatenate([input_array, np.array([0] * (max_length - len(input_array)))])
+                pad_values.append(input_array)
+                attention_masks.append(attention_mask)
+        encoded_inputs['tokens'] = np.array(pad_values)
+        encoded_inputs['attention_masks'] = np.array(attention_masks)
+        return encoded_inputs
+
+class SpeechToTextDataset2(FairseqDataset):
+    LANG_TAG_TEMPLATE = "<lang:{}>"
+
+    def __init__(
+        self,
+        split = 'train',
+        audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
+        # n_frames = 15.6*16000,
+        max_frames = 15.6*16000,
+        tgt_texts = None,
+        tgt_dict = None,
+        audio_tokenizer =ASRTokenizer(),
+        prepend_bos = True
+    ):
+        '''
+        use tgt dict to tokenize the text output
+        '''
+
+        self.split =split
+        self.audio_file_prefix = audio_paths + self.split + '/audiofiles/'
+        self.text_file = audio_paths + self.split + '/' + self.split + '.fr'
+        self.meta_file = audio_paths + self.split + '/alignments.meta'
+        self.audio_tokenizer = audio_tokenizer
+        self.max_frames = max_frames
+        self.audio_list, self.tgt_texts = self.read_sound_file()
+        self.pre_tokenizer = None
+        self.bpe_tokenizer = None
+        self.prepend_bos = prepend_bos
+    
+    def read_sound_file(self,):
+        audio_name_list = []
+        audio_list = []
+        fr_text_list = []
+        with open(self.meta_file,'r',encoding = 'utf-8') as f:
+            next(f)
+            for line in f:
+                book_id, chap_id, reader_id, _, audio_name, duration = line.strip().split('\t',5)
+                audio_name_list.append(audio_name)
+
+        with open(self.text_file, 'r', encoding = 'utf-8') as f:
+            for line in f:
+                text = line.strip().split()
+                fr_text_list.append(text)
+
+
+        for i in range(len(audio_name_list)):
+            audio_name = audio_name_list[i]
+            file_path = self.audio_file_prefix + audio_name + '.wav'
+            audio_input, sample_rate = sf.read(file_path)
+            audio_list.append(audio_input)
+        
+        return audio_list, fr_text_list
+
+    def tokenize_text(self, text: str):
+        if self.pre_tokenizer is not None:
+            text = self.pre_tokenizer.encode(text)
+        if self.bpe_tokenizer is not None:
+            text = self.bpe_tokenizer.encode(text)
+        return text
+
+    def __getitem__(
+        self, index: int
+    ) -> Tuple[int, torch.Tensor, Optional[torch.Tensor]]:
+        source = self.audio_list[index]
+
+        target = None
+        if self.tgt_texts is not None:
+            tokenized = self.tokenize_text(self.tgt_texts[index])
+            target = self.tgt_dict.encode_line(
+                tokenized, add_if_not_exist=False, append_eos=True
+            ).long()
+            if self.prepend_bos:
+                lang_tag_idx = self.tgt_dict.bos_index
+                target = torch.cat((torch.LongTensor([lang_tag_idx]), target), 0)
+        return index, source, target
+
+    def __len__(self):
+        return self.n_samples
+
+    def collater(self, samples: List[Tuple[int, torch.Tensor, torch.Tensor]]) -> Dict:
+        if len(samples) == 0:
+            return {}
+        indices = torch.tensor([i for i, _, _ in samples], dtype=torch.long)
+        frames = _collate_frames2(
+            [s for _, s, _ in samples], is_audio_input = True, max_len = self.max_frames
+        )
+        # sort samples by descending number of frames
+        n_frames = torch.tensor([s.size(0) for _, s, _ in samples], dtype=torch.long)
+        n_frames, order = n_frames.sort(descending=True)
+        indices = indices.index_select(0, order)
+        frames = frames.index_select(0, order)
+
+        target, target_lengths = None, None
+        prev_output_tokens = None
+        ntokens = None
+        if self.tgt_texts is not None:
+            target = fairseq_data_utils.collate_tokens(
+                [t for _, _, t in samples],
+                self.tgt_dict.pad(),
+                self.tgt_dict.eos(),
+                left_pad=False,
+                move_eos_to_beginning=False,
+            )
+            target = target.index_select(0, order)
+            target_lengths = torch.tensor(
+                [t.size(0) for _, _, t in samples], dtype=torch.long
+            ).index_select(0, order)
+            prev_output_tokens = fairseq_data_utils.collate_tokens(
+                [t for _, _, t in samples],
+                self.tgt_dict.pad(),
+                self.tgt_dict.eos(),
+                left_pad=False,
+                move_eos_to_beginning=True,
+            )
+            prev_output_tokens = prev_output_tokens.index_select(0, order)
+            ntokens = sum(t.size(0) for _, _, t in samples)
+
+        out = {
+            "id": indices,
+            "net_input": {
+                "src_tokens": frames,
+                "src_lengths": n_frames,
+                "prev_output_tokens": prev_output_tokens,
+            },
+            "target": target,
+            "target_lengths": target_lengths,
+            "ntokens": ntokens,
+            "nsentences": len(samples),
+        }
+        return out
+
+    def ordered_indices(self):
+        if self.shuffle:
+            order = [np.random.permutation(len(self))]
+        else:
+            order = [np.arange(len(self))]
+        # first by descending order of # of frames then by original/random order
+        order.append([-n for n in self.n_frames])
+        return np.lexsort(order)
 
 
 class SpeechToTextDatasetCreator(object):
