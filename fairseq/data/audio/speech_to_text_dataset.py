@@ -526,9 +526,9 @@ class SpeechToTextDataset2(FairseqDataset):
         self.bpe_tokenizer = None
         self.prepend_bos = prepend_bos
         if self.split == 'train':
-            self.shufful = True
+            self.shuffle = True
         else:
-            self.shufful = False
+            self.shuffle = False
     
     def read_sound_file(self,):
         audio_name_list = []
