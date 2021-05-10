@@ -12,6 +12,10 @@ from transformers import Wav2Vec2Tokenizer, Wav2Vec2ForCTC, BartForConditionalGe
 # from ..preprocessing import data_util
 from fairseq.optim import adam
 from torch.optim import AdamW
+from .. import (
+    FairseqEncoder, FairseqIncrementalDecoder, FairseqModel,
+    FairseqLanguageModel, register_model, register_model_architecture,
+)
 
 
 def get_bart_hubs():
@@ -31,7 +35,10 @@ def get_wav2vec2_hubs():
         'wav2vec2.large':'https://dl.fbaipublicfiles.com/fairseq/wav2vec/wav2vec_vox_new.pt'
     }
 
+
+# @register_model('ASRModel')
 class ASRModel(nn.Module):
+# class ASRModel(FairseqModel):
     def __init__(self, wav2vec2_model_type = 'wav2vec2.base',bart_model_type = 'bart.base', 
                     wav2vec2_cache_dir = '/data/private/houbairu/model_cache/wav2vec_model/',
                     bart_model_cache_dir = '/data/private/houbairu/model_cache/bart_model/',
@@ -64,7 +71,13 @@ class ASRModel(nn.Module):
         self.wav2vec_encoder = self.load_wav2vec_encoder().to(self.device)
         self.bart_decoder = self.load_bart_decoder().to(self.device)
 
-
+    def set_num_updates(self, num_updates):
+        # self.wav2vec_encoder.set_num_updates(num_updates)
+        # self.bart_decoder.set_num_updates(num_updates)
+        for m in self.modules():
+            if hasattr(m, "set_num_updates") and m != self:
+                m.set_num_updates(num_updates)
+        self.num_updates = num_updates
 
     def load_wav2vec_encoder(self,):
         '''
@@ -112,10 +125,41 @@ class ASRModel(nn.Module):
         # print(type(bart_model))
         bart_model.output_projection = nn.Linear(self.bart_hidden_dim, self.vocab_size)
         nn.init.normal_(bart_model.output_projection.weight, mean = 0,std = 0.2)
+        orig_embedding_dim = bart_model.embed_tokens.embedding_dim
+        bart_model.embed_tokens = nn.Embedding(num_embeddings = self.vocab_size, embedding_dim = orig_embedding_dim,
+                                                padding_idx = self.word_dictionary.pad_index, )
+        nn.init.normal_(bart_model.embed_tokens.weight, mean = 0,std = 0.2)
         bart_model.dictionary = self.word_dictionary
         return bart_model
+
+    def get_normalized_probs(
+        self, 
+        net_output,
+        log_probs,
+        sample = None,
+    ):
+        """
+        Get normalized probabilities (or log probs) from a net's output.
+        Pointer-generator network output is already normalized.
+        """
+        probs = net_output
+        # Make sure the probabilities are greater than zero when returning log
+        # probabilities.
+        return probs.clamp(1e-10, 1.0).log() if log_probs else probs
     
-    def forward(self, batch_wav_input, padding_mask = None, tgt_tokens = None):
+    def get_targets(self, sample, net_output):
+        """Get targets from either the sample or the net's output."""
+        return sample["target"]
+
+    def max_positions(self):
+        """Maximum output length supported by the decoder."""
+        # if self.embed_positions is None:
+        #     return self.max_target_positions
+        # return min(self.max_target_positions, self.embed_positions.max_positions())
+        return self.decode_max_length
+
+
+    def forward(self, **param_dict):
         '''
         batch_wav_input: batch_size * input_sequence_length
         padding_mask: batch_size * input_sequence_length, 0/1
@@ -123,6 +167,26 @@ class ASRModel(nn.Module):
 
         return: batch_size * target_sequence_length * vocab_size
         '''
-        wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
+        batch_wav_input = param_dict['src_tokens'].float()
+        tgt_tokens = param_dict['prev_output_tokens']
+
+        wav2vec2_output = self.wav2vec_encoder(batch_wav_input)['x']
+
+        # wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
         bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,)
         return bart_output
+
+
+    # def forward(self, batch_wav_input, padding_mask = None, tgt_tokens = None):
+    #     '''
+    #     batch_wav_input: batch_size * input_sequence_length
+    #     padding_mask: batch_size * input_sequence_length, 0/1
+    #     tgt_tokens: batch_size * target_sequence_length
+
+    #     return: batch_size * target_sequence_length * vocab_size
+    #     '''
+    #     print("encode")
+    #     wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
+    #     print("decode")
+    #     bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,)
+    #     return bart_output

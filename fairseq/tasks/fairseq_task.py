@@ -259,6 +259,7 @@ class FairseqTask(object):
             ~fairseq.iterators.EpochBatchIterator: a batched iterator over the
                 given dataset split
         """
+
         can_reuse_epoch_itr = not disable_iterator_cache and self.can_reuse_epoch_itr(
             dataset
         )
@@ -274,7 +275,6 @@ class FairseqTask(object):
         # get indices ordered by example size
         with data_utils.numpy_seed(seed):
             indices = dataset.ordered_indices()
-
         # filter examples that are too large
         if max_positions is not None:
             indices = self.filter_indices_by_size(

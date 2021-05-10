@@ -176,6 +176,8 @@ class SpeechToTextTask2(LegacyFairseqTask):
         logger.info(
             "dictionary size: " f"{len(tgt_dict):,}"
         )
+        print(tgt_dict)
+        print(len(tgt_dict))
 
         return cls(args, tgt_dict)
 
@@ -193,7 +195,7 @@ class SpeechToTextTask2(LegacyFairseqTask):
         is_train_split = split.startswith("train")
         # pre_tokenizer = self.build_tokenizer(self.args)
         # bpe_tokenizer = self.build_bpe(self.args)
-        self.datasets[split] = SpeechToTextDataset2(split = split,)
+        self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict)
 
 
     @property
@@ -208,7 +210,7 @@ class SpeechToTextTask2(LegacyFairseqTask):
         return self.args.max_source_positions, self.args.max_target_positions
 
     def build_model(self, args, vocab_size):
-        return ASRModel(vocab_size = vocab_size)
+        return ASRModel(vocab_size = vocab_size, word_dictionary = self.tgt_dict)
 
     def build_generator(
         self,

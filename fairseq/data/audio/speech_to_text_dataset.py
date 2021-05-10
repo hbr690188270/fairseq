@@ -214,7 +214,7 @@ def _collate_frames(
 
 
 def _collate_frames2(
-    frames: List[torch.Tensor], is_audio_input: bool = False, max_len = None
+    frames: List[torch.Tensor], is_audio_input: bool = True, max_len = None
 ) -> torch.Tensor:
     """
     Convert a list of 2D frames into a padded 3D tensor
@@ -231,7 +231,7 @@ def _collate_frames2(
     else:
         out = frames[0].new_zeros((len(frames), max_len, frames[0].size(1)))
     for i, v in enumerate(frames):
-        out[i, : v.size(0)] = v
+        out[i, : min([max_len, v.size(0)])] = v[:min([max_len, v.size(0)])]
     return out
 
 
@@ -338,6 +338,7 @@ class SpeechToTextDataset(FairseqDataset):
 
     def __len__(self):
         return self.n_samples
+
 
     def collater(self, samples: List[Tuple[int, torch.Tensor, torch.Tensor]]) -> Dict:
         if len(samples) == 0:
@@ -505,8 +506,7 @@ class SpeechToTextDataset2(FairseqDataset):
         split = 'train',
         audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
         # n_frames = 15.6*16000,
-        max_frames = 15.6*16000,
-        tgt_texts = None,
+        max_frames = int(5*16000),
         tgt_dict = None,
         audio_tokenizer =ASRTokenizer(),
         prepend_bos = True
@@ -520,8 +520,9 @@ class SpeechToTextDataset2(FairseqDataset):
         self.text_file = audio_paths + self.split + '/' + self.split + '.fr'
         self.meta_file = audio_paths + self.split + '/alignments.meta'
         self.audio_tokenizer = audio_tokenizer
+        self.tgt_dict = tgt_dict
         self.max_frames = max_frames
-        self.audio_list, self.tgt_texts = self.read_sound_file()
+        self.audio_list, self.tgt_texts, self.n_frames = self.read_sound_file()
         self.pre_tokenizer = None
         self.bpe_tokenizer = None
         self.prepend_bos = prepend_bos
@@ -529,12 +530,16 @@ class SpeechToTextDataset2(FairseqDataset):
             self.shuffle = True
         else:
             self.shuffle = False
-    
+        self.n_samples = len(self.tgt_texts)
+        print(self.n_samples)
+        # self.n_frames = self.audio_list ### n_frames应该是每个audio的time step数量，后续需要修正
+
     def read_sound_file(self,):
         audio_name_list = []
         audio_list = []
         fr_text_list = []
-        max_value = 1000
+        max_value = 20
+        audio_length_list = []
 
         count = 0
         with open(self.meta_file,'r',encoding = 'utf-8') as f:
@@ -547,9 +552,14 @@ class SpeechToTextDataset2(FairseqDataset):
                 book_id, chap_id, reader_id, _, audio_name, duration = line.strip().split('\t',5)
                 audio_name_list.append(audio_name)
 
+        count = 0
         with open(self.text_file, 'r', encoding = 'utf-8') as f:
             for line in f:
-                text = line.strip().split()
+                count += 1
+                if count >= max_value:
+                    break
+                # text = line.strip().split()
+                text = line.strip()
                 fr_text_list.append(text)
 
 
@@ -558,8 +568,9 @@ class SpeechToTextDataset2(FairseqDataset):
             file_path = self.audio_file_prefix + audio_name + '.wav'
             audio_input, sample_rate = sf.read(file_path)
             audio_list.append(audio_input)
-        
-        return audio_list, fr_text_list
+            audio_length_list.append(len(audio_input))
+        print(len(audio_list), len(fr_text_list), len(audio_length_list))
+        return audio_list, fr_text_list, np.array(audio_length_list)
 
     def tokenize_text(self, text: str):
         if self.pre_tokenizer is not None:
@@ -571,7 +582,7 @@ class SpeechToTextDataset2(FairseqDataset):
     def __getitem__(
         self, index: int
     ) -> Tuple[int, torch.Tensor, Optional[torch.Tensor]]:
-        source = self.audio_list[index]
+        source = torch.tensor(self.audio_list[index])
 
         target = None
         if self.tgt_texts is not None:
@@ -646,7 +657,24 @@ class SpeechToTextDataset2(FairseqDataset):
             order = [np.arange(len(self))]
         # first by descending order of # of frames then by original/random order
         order.append([-n for n in self.n_frames])
+        # print(order)
         return np.lexsort(order)
+        # return order
+
+    def num_tokens(self, index):
+        """Return the number of tokens in a sample. This value is used to
+        enforce ``--max-tokens`` during batching."""
+        return self.n_frames[index]
+
+    def num_tokens_vec(self, indices):
+        """Return the number of tokens for a set of positions defined by indices.
+        This value is used to enforce ``--max-tokens`` during batching."""
+        int_indices = indices.astype(np.int32)
+        return self.n_frames[indices]
+
+    def size(self, index):
+        return self.n_frames[index]
+        # return (self.n_frames[index], len(self.tgt_texts[index].split()))
 
 
 class SpeechToTextDatasetCreator(object):

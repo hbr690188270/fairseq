@@ -23,7 +23,7 @@ from fairseq.tasks.speech_to_text import SpeechToTextTask2
 
 def main(args):
     if args.max_tokens is None:
-        args.max_tokens = 6000
+        args.max_tokens = 16000*100
     print(args)
 
     # if not torch.cuda.is_available():
@@ -32,7 +32,9 @@ def main(args):
         device = torch.device('cpu:0')
     else:
         torch.cuda.set_device(args.device_id)
-    
+    # device = torch.device('cpu:0')    
+    # torch.cuda.set_device(device)
+
     torch.manual_seed(args.seed)
 
     # Setup task, e.g., translation, language modeling, etc.
@@ -49,7 +51,7 @@ def main(args):
 
     model = task.build_model(args, vocab_size)
     criterion = task.build_criterion(args)
-    print('| model {}, criterion {}'.format(args.arch, criterion.__class__.__name__))
+    print('|criterion {}'.format(criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
 
     # Make a dummy batch to (i) warm the caching allocator and (ii) as a
@@ -64,7 +66,10 @@ def main(args):
 
     # Build trainer
     # trainer = Trainer(args, task, model, criterion, dummy_batch)
+    # print("arch: ",args.arch)
+
     trainer = Trainer(args, task, model, criterion)
+    trainer.consolidate_optimizer()
 
     print('| training on {} GPUs'.format(args.distributed_world_size))
     print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
@@ -73,10 +78,14 @@ def main(args):
     ))
 
     # Initialize dataloader
+    batch_size = args.max_sentences
+    if batch_size is None:
+        batch_size = 5
+    print(batch_size)
     epoch_itr = task.get_batch_iterator(
         dataset=task.dataset(args.train_subset),
         max_tokens=args.max_tokens,
-        max_sentences=args.max_sentences,
+        max_sentences=batch_size,
         max_positions=max_positions,
         ignore_invalid_inputs=True,
         required_batch_size_multiple=1,
@@ -86,8 +95,8 @@ def main(args):
     )
 
     # Load the latest checkpoint if one is available
-    if not load_checkpoint(args, trainer, epoch_itr):
-        trainer.dummy_train_step([dummy_batch])
+    # if not load_checkpoint(args, trainer, epoch_itr):
+    #     trainer.dummy_train_step([dummy_batch])
 
     #Freeze encoder weights if requested
     # if args.freeze_encoder:
@@ -122,7 +131,7 @@ def main(args):
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
 
 
-def train(args, trainer, task, epoch_itr):
+def train(args, trainer, task, epoch_itr,):
     """Train the model for one epoch."""
 
     # Update parameters every N batches
@@ -219,10 +228,7 @@ def validate(args, trainer, task, epoch_itr, subsets):
             dataset=task.dataset(subset),
             max_tokens=args.max_tokens,
             max_sentences=args.max_sentences_valid,
-            max_positions=utils.resolve_max_positions(
-                task.max_positions(),
-                trainer.get_model().max_positions(),
-            ),
+            max_positions=None,
             ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
             required_batch_size_multiple=8,
             seed=args.seed,
@@ -359,8 +365,14 @@ def load_dataset_splits(task, splits):
 if __name__ == '__main__':
     parser = options.get_training_parser()
     parser.add_argument('--max_sentences', type = int, default = 5)
-    # args = options.parse_args_and_arch(parser)
-    args = parser.parse_args()
+    parser.add_argument('--batch_size', type = int, default = 5)
+    # parser.add_argument('--update_freq', type = int, default = 1)
+    # parser.add_argument('--lr', '--learning-rate', default=0.25,type = float)
+
+
+    args = options.parse_args_and_arch(parser)
+    # print(args)
+    # args = parser.parse_args()
     if args.distributed_port > 0 or args.distributed_init_method is not None:
         from distributed_train import main as distributed_main
 
