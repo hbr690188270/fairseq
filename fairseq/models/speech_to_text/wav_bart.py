@@ -169,11 +169,17 @@ class ASRModel(nn.Module):
         '''
         batch_wav_input = param_dict['src_tokens'].float()
         tgt_tokens = param_dict['prev_output_tokens']
-
-        wav2vec2_output = self.wav2vec_encoder(batch_wav_input)['x']
+        padding_mask = param_dict['pad_masks']
+        wav2vec2_output = self.wav2vec_encoder(source = batch_wav_input, padding_mask = padding_mask, features_only = True)
+        output_hidden_states = wav2vec2_output['x'].transpose(0,1)
+        padding_mask = wav2vec2_output['padding_mask']
+        encode_output = {
+            'encoder_out':[output_hidden_states],
+            'encoder_padding_mask': [padding_mask]
+        }
 
         # wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
-        bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,)
+        bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,encoder_out = encode_output)
         return bart_output
 
 

@@ -23,7 +23,7 @@ from fairseq.tasks.speech_to_text import SpeechToTextTask2
 
 def main(args):
     if args.max_tokens is None:
-        args.max_tokens = 16000*100
+        args.max_tokens = 16000*300
     print(args)
 
     # if not torch.cuda.is_available():
@@ -80,7 +80,7 @@ def main(args):
     # Initialize dataloader
     batch_size = args.max_sentences
     if batch_size is None:
-        batch_size = 5
+        batch_size = 2
     print(batch_size)
     epoch_itr = task.get_batch_iterator(
         dataset=task.dataset(args.train_subset),
@@ -119,8 +119,9 @@ def main(args):
         train(args, trainer, task, epoch_itr)
 
         if epoch_itr.epoch % args.validate_interval == 0:
+            print("validating...")
             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
-
+            print("valid loss: ", valid_losses)
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
@@ -227,10 +228,10 @@ def validate(args, trainer, task, epoch_itr, subsets):
         itr = task.get_batch_iterator(
             dataset=task.dataset(subset),
             max_tokens=args.max_tokens,
-            max_sentences=args.max_sentences_valid,
+            max_sentences=10,
             max_positions=None,
-            ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
-            required_batch_size_multiple=8,
+            ignore_invalid_inputs=True,
+            required_batch_size_multiple=1,
             seed=args.seed,
             num_shards=args.distributed_world_size,
             shard_id=args.distributed_rank,
@@ -364,8 +365,8 @@ def load_dataset_splits(task, splits):
 
 if __name__ == '__main__':
     parser = options.get_training_parser()
-    parser.add_argument('--max_sentences', type = int, default = 5)
-    parser.add_argument('--batch_size', type = int, default = 5)
+    parser.add_argument('--max_sentences', type = int, default = 4)
+    parser.add_argument('--batch_size', type = int, default = 4)
     # parser.add_argument('--update_freq', type = int, default = 1)
     # parser.add_argument('--lr', '--learning-rate', default=0.25,type = float)
 
