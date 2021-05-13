@@ -484,7 +484,6 @@ class Wav2Vec2Model(BaseFairseqModel):
         else:
             with torch.no_grad():
                 features = self.feature_extractor(source)
-
         features_pen = features.float().pow(2).mean()
 
         features = features.transpose(1, 2)
@@ -545,7 +544,6 @@ class Wav2Vec2Model(BaseFairseqModel):
             mask_indices = None
 
         x = self.encoder(x, padding_mask=padding_mask)
-
         if features_only:
             return {"x": x, "padding_mask": padding_mask}
 
