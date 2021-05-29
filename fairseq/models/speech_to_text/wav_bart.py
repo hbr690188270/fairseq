@@ -8,7 +8,6 @@ from fairseq.dataclass.utils import (
     overwrite_args_by_name,
 )
 import soundfile as sf
-from transformers import Wav2Vec2Tokenizer, Wav2Vec2ForCTC, BartForConditionalGeneration, GPT2Model,GPT2LMHeadModel
 # from ..preprocessing import data_util
 from fairseq.optim import adam
 from torch.optim import AdamW
@@ -16,7 +15,6 @@ from .. import (
     FairseqEncoder, FairseqIncrementalDecoder, FairseqModel,
     FairseqLanguageModel, register_model, register_model_architecture,
 )
-
 
 def get_bart_hubs():
     return {
@@ -70,6 +68,9 @@ class ASRModel(nn.Module):
         # self.load_bart_decoder()
         self.wav2vec_encoder = self.load_wav2vec_encoder().to(self.device)
         self.bart_decoder = self.load_bart_decoder().to(self.device)
+        # self.encoder = self.load_wav2vec_encoder().to(self.device)
+        # self.decoder = self.load_bart_decoder().to(self.device)
+
 
     def set_num_updates(self, num_updates):
         # self.wav2vec_encoder.set_num_updates(num_updates)
@@ -130,7 +131,9 @@ class ASRModel(nn.Module):
                                                 padding_idx = self.word_dictionary.pad_index, )
         nn.init.normal_(bart_model.embed_tokens.weight, mean = 0,std = 0.2)
         bart_model.dictionary = self.word_dictionary
+    
         return bart_model
+
 
     def get_normalized_probs(
         self, 
@@ -142,9 +145,13 @@ class ASRModel(nn.Module):
         Get normalized probabilities (or log probs) from a net's output.
         Pointer-generator network output is already normalized.
         """
-        probs = net_output
+        # probs = net_output
         # Make sure the probabilities are greater than zero when returning log
         # probabilities.
+        if log_probs:
+            return torch.nn.functional.log_softmax(net_output, dim = -1)
+        else:
+            return torch.nn.functional.softmax(net_output, dim = -1)
         return probs.clamp(1e-10, 1.0).log() if log_probs else probs
     
     def get_targets(self, sample, net_output):
@@ -157,6 +164,14 @@ class ASRModel(nn.Module):
         #     return self.max_target_positions
         # return min(self.max_target_positions, self.embed_positions.max_positions())
         return self.decode_max_length
+
+    def max_decoder_positions(self):
+        """Maximum output length supported by the decoder."""
+        # if self.embed_positions is None:
+        #     return self.max_target_positions
+        # return min(self.max_target_positions, self.embed_positions.max_positions())
+        return self.decode_max_length
+
 
 
     def forward(self, **param_dict):
@@ -177,7 +192,7 @@ class ASRModel(nn.Module):
             'encoder_out':[output_hidden_states],
             'encoder_padding_mask': [padding_mask]
         }
-
+        # print(encode_output['encoder_out'])
         # wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
         bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,encoder_out = encode_output)
         return bart_output

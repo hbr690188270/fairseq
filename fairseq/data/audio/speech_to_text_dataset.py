@@ -17,6 +17,7 @@ from fairseq.data import (
     Dictionary,
     FairseqDataset,
     ResamplingDataset,
+    audio,
     data_utils as fairseq_data_utils,
 )
 from fairseq.data.audio.audio_utils import get_fbank, get_waveform
@@ -550,10 +551,12 @@ class SpeechToTextDataset2(FairseqDataset):
         split = 'train',
         audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
         # n_frames = 15.6*16000,
-        max_frames = int(15*16000),
+        max_frames = int(10*16000),
         tgt_dict = None,
         audio_tokenizer =ASRTokenizer(),
-        prepend_bos = True
+        prepend_bos = True,
+        max_len = 50,    ## 生成文本的最大长度，默认pad到50
+        debug = False
     ):
         '''
         use tgt dict to tokenize the text output
@@ -566,10 +569,13 @@ class SpeechToTextDataset2(FairseqDataset):
         self.audio_tokenizer = audio_tokenizer
         self.tgt_dict = tgt_dict
         self.max_frames = max_frames
-        self.audio_name_list, self.tgt_texts, self.n_frames = self.read_sound_file()
+        self.audio_name_list, self.tgt_texts, self.n_frames = self.read_sound_file(debug = debug)
         self.pre_tokenizer = None
         self.bpe_tokenizer = None
         self.prepend_bos = prepend_bos
+        self.max_len = max_len
+        # self.max_len = None
+
         if self.split == 'train':
             self.shuffle = True
         else:
@@ -578,7 +584,8 @@ class SpeechToTextDataset2(FairseqDataset):
         print(self.n_samples)
         # self.n_frames = self.audio_list ### n_frames应该是每个audio的time step数量，后续需要修正
 
-    def read_sound_file(self,):
+    def read_sound_file(self,debug = False):
+        print("reading sound file...")
         audio_name_list = []
         audio_list = []
         fr_text_list = []
@@ -599,8 +606,11 @@ class SpeechToTextDataset2(FairseqDataset):
                 text = line.strip()
                 fr_text_list.append(text)
 
-
-        for i in range(len(audio_name_list)):
+        if debug:
+            read_num = 1000
+        else:
+            read_num = len(audio_name_list)
+        for i in range(len(audio_name_list[:read_num])):
             audio_name = audio_name_list[i]
             file_path = self.audio_file_prefix + audio_name + '.wav'
             audio_input, sample_rate = sf.read(file_path)
@@ -608,7 +618,8 @@ class SpeechToTextDataset2(FairseqDataset):
             del audio_input
         print(len(fr_text_list), len(audio_length_list))
         return audio_name_list, fr_text_list, np.array(audio_length_list)
-        # return audio_name_list[:100], fr_text_list[:100], np.array(audio_length_list[:100])
+        # return audio_name_list[:1000], fr_text_list[:1000], np.array(audio_length_list[:1000])
+        # return audio_name_list[:10], fr_text_list[:10], np.array(audio_length_list[:10])
 
 
     def tokenize_text(self, text: str):
@@ -625,7 +636,9 @@ class SpeechToTextDataset2(FairseqDataset):
         audio_name = self.audio_name_list[index]
         file_path = self.audio_file_prefix + audio_name + '.wav'
         audio_input, sample_rate = sf.read(file_path)
-        source = torch.tensor(audio_input)
+        audio_input = torch.tensor(audio_input)
+        source = (audio_input - torch.mean(audio_input)) / torch.sqrt(torch.var(audio_input) + 1e-5)
+        # source = torch.tensor(audio_input)
 
         target = None
         if self.tgt_texts is not None:
@@ -665,6 +678,7 @@ class SpeechToTextDataset2(FairseqDataset):
                 self.tgt_dict.eos(),
                 left_pad=False,
                 move_eos_to_beginning=False,
+                pad_to_length= self.max_len,
             )
             target = target.index_select(0, order)
             target_lengths = torch.tensor(
@@ -676,6 +690,7 @@ class SpeechToTextDataset2(FairseqDataset):
                 self.tgt_dict.eos(),
                 left_pad=False,
                 move_eos_to_beginning=True,
+                pad_to_length = self.max_len,
             )
             prev_output_tokens = prev_output_tokens.index_select(0, order)
             ntokens = sum(t.size(0) for _, _, t in samples)

@@ -48,7 +48,6 @@ class Trainer(object):
                 "argparse.Namespace configuration is deprecated! Automatically converting to OmegaConf"
             )
             cfg = convert_namespace_to_omegaconf(cfg)
-
         self.cfg = cfg
         self.task = task
 
@@ -1281,7 +1280,7 @@ class Trainer(object):
         with metrics.aggregate() as agg:
             if logging_outputs is not None:
                 self.task.reduce_metrics(logging_outputs, self.get_criterion())
-                del logging_outputs
+                # del logging_outputs
 
             # extra warning for criterions that don't properly log a loss value
             if "loss" not in agg:
@@ -1302,6 +1301,16 @@ class Trainer(object):
                 for key_to_delete in ["ppl", "wps", "wpb", "bsz"]:
                     if key_to_delete in logging_output:
                         del logging_output[key_to_delete]
+
+            ## modified--hbr
+            acc_list = [x['acc'] for x in logging_outputs]
+            token_num = [x['valid_token_num'] for x in logging_outputs]
+            del logging_outputs
+            total_acc = sum([acc_list[i] * token_num[i] for i in range(len(acc_list))])
+            total_token_num = sum(token_num)
+            acc = total_acc / total_token_num
+            logging_output['acc'] = acc
+            logging_output['valid_token_num'] = total_token_num
             return logging_output
 
     def _check_xla_compilation(self):

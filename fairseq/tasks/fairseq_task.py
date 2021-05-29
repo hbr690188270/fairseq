@@ -477,6 +477,29 @@ class FairseqTask(object):
             loss *= 0
         with torch.autograd.profiler.record_function("backward"):
             optimizer.backward(loss)
+        
+        # print("loss: ", loss)
+        # print("grad: ", model.bart_decoder.output_projection.weight.grad.norm())
+        # print()
+        # print("grad: ")
+        # grad_list = []
+        # name_list = []
+        # for name, p in list(model.named_parameters()):
+        #     # print(p.data.grad)
+        #     if p.grad == None:
+        #         continue
+        #     name_list.append(name)
+        #     grad_list.append(torch.norm(p.grad))
+        # grad_tensor = torch.tensor(grad_list)
+        # index = torch.argsort(-grad_tensor)
+        # sort_names = [name_list[x] for x in index]
+        # grads = grad_tensor[index]
+        # print(sort_names)
+        # print(grads)
+        # print()
+        
+
+        # print(model.bart_decoder.output_projection.weight.grad)
         return loss, sample_size, logging_output
 
     def valid_step(self, sample, model, criterion):

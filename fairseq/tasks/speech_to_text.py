@@ -173,6 +173,12 @@ class SpeechToTextTask2(LegacyFairseqTask):
     def setup_task(cls, args, tgt_dict_path):
         with open(tgt_dict_path,'rb') as f:
             tgt_dict = pickle.load(f)  ## Dictironary
+        tgt_dict.finalize(nwords = 50000)
+        print("bos idx: ", tgt_dict.bos_index)
+        print("pad idx: ", tgt_dict.pad_index)
+        print("eos idx: ", tgt_dict.eos_index)
+        print("unk idx: ", tgt_dict.unk_index)
+
         logger.info(
             "dictionary size: " f"{len(tgt_dict):,}"
         )
@@ -191,11 +197,11 @@ class SpeechToTextTask2(LegacyFairseqTask):
         #     )
         return criterions.build_criterion(args, self)
 
-    def load_dataset(self, split, epoch=1, combine=False, **kwargs):
+    def load_dataset(self, split, max_len = None, debug = False):
         is_train_split = split.startswith("train")
         # pre_tokenizer = self.build_tokenizer(self.args)
         # bpe_tokenizer = self.build_bpe(self.args)
-        self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict)
+        self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict, max_len = 50, debug = debug)
 
 
     @property
@@ -247,7 +253,7 @@ class SpeechToTextTask2(LegacyFairseqTask):
         return lines, n_frames
 
     def build_dataset_for_inference(self, src_tokens, src_lengths, **kwargs):
-        return SpeechToTextDataset(
+        return SpeechToTextDataset2(
             "interactive", False, self.data_cfg, src_tokens, src_lengths
         )
 

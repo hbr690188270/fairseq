@@ -20,6 +20,19 @@ from fairseq.data import iterators
 from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 from fairseq.tasks.speech_to_text import SpeechToTextTask2
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO) 
+# fh = logging.FileHandler("length_clip_output.txt", mode='w')
+# fh = logging.FileHandler("freeze_encoder_out.txt", mode='w')
+# fh = logging.FileHandler("length_clip_freeze_encoder_output.txt", mode='w')
+
+fh = logging.FileHandler("tmp.txt", mode='w')
+
+logger.addHandler(fh)
+
+
 
 def main(args):
     if args.max_tokens is None:
@@ -43,16 +56,39 @@ def main(args):
     # task = tasks.setup_task(args)
 
     # Load dataset splits
-    load_dataset_splits(task, ['train', 'dev', 'test'])
+    if args.debug:
+        debug = True
+        print("debug... only read 1000 samples...")
+    else:
+        debug = False
+    
+    if args.max_len == 0:
+        max_len = None
+        print("do not set max length padding...")
+    else:
+        max_len = args.max_len
+        print("set max length %d ..."%(max_len))
 
+    print("loading dataset ....")
+    load_dataset_splits(task, ['train', 'dev', 'test'],max_len, debug)
+    print("dataset loaded! ")
     # Build model and criterion
     tgt_dict = task.tgt_dict
     vocab_size = len(task.tgt_dict)
-
-    model = task.build_model(args, vocab_size)
+    print("loading model....")
+    model = task.build_model(args, vocab_size = 50000)
+    print("model loaded!  ")
     criterion = task.build_criterion(args)
     print('|criterion {}'.format(criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
+    
+    if args.freeze_encoder:
+        print("freeze encoder parameters...")
+        for p in model.wav2vec_encoder.parameters():
+            p.requires_grad = False
+    
+    # for p in model.bart_decoder.parameters():
+    #     print(p, p.requires_grad)
 
     # Make a dummy batch to (i) warm the caching allocator and (ii) as a
     # placeholder DistributedDataParallel when there's an uneven number of
@@ -74,13 +110,13 @@ def main(args):
     print('| training on {} GPUs'.format(args.distributed_world_size))
     print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
         args.max_tokens,
-        args.max_sentences,
+        args.batch_size,
     ))
 
     # Initialize dataloader
-    batch_size = args.max_sentences
+    batch_size = args.batch_size
     if batch_size is None:
-        batch_size = 2
+        batch_size = 5
     print(batch_size)
     epoch_itr = task.get_batch_iterator(
         dataset=task.dataset(args.train_subset),
@@ -107,7 +143,7 @@ def main(args):
     # max_epoch = args.max_epoch or math.inf
     # max_update = args.max_update or math.inf
     max_epoch = 20
-    max_update = args.max_update or math.inf
+    max_update = math.inf
 
     lr = trainer.get_lr()
     train_meter = StopwatchMeter()
@@ -120,7 +156,10 @@ def main(args):
 
         if epoch_itr.epoch % args.validate_interval == 0:
             print("validating...")
+            logger.info("validating...")
             valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+            logger.info("valid loss: ")
+            logger.info(valid_losses)
             print("valid loss: ", valid_losses)
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
@@ -130,31 +169,53 @@ def main(args):
             save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
-
+    logger.info('| done training in {:.1f} seconds'.format(train_meter.sum))
 
 def train(args, trainer, task, epoch_itr,):
     """Train the model for one epoch."""
 
     # Update parameters every N batches
-    if epoch_itr.epoch <= len(args.update_freq):
-        update_freq = args.update_freq[epoch_itr.epoch - 1]
-    else:
-        update_freq = args.update_freq[-1]
-
+    # if epoch_itr.epoch <= len(args.update_freq):
+    #     update_freq = args.update_freq[epoch_itr.epoch - 1]
+    # else:
+    #     update_freq = args.update_freq[-1]
+    update_freq = args.update_freq[0]
+    print("update freq: ", update_freq)
+    logger.info("update freq: ")
+    logger.info(update_freq)
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(fix_batches_to_gpus=args.fix_batches_to_gpus)
     itr = iterators.GroupedIterator(itr, update_freq)
     progress = progress_bar.build_progress_bar(
         args, itr, epoch_itr.epoch, no_progress_bar='simple',
     )
+    # progress = progress_bar.build_progress_bar(
+    #     args, itr, epoch_itr.epoch, no_progress_bar='none',default='none'
+    # )
 
     extra_meters = collections.defaultdict(lambda: AverageMeter())
     first_valid = args.valid_subset.split(',')[0]
     max_update = args.max_update or math.inf
+
+    epoch_acc = 0
+    total_tokens = 0
+    total_samples = len(progress)
+    print("total sample: ", total_samples)
+    logger.info("total sample: ")
+    logger.info(total_samples)
     for i, samples in enumerate(progress, start=epoch_itr.iterations_in_epoch):
+        if i % 1000 == 0:
+            msg = "%d/%d"%(i, total_samples)
+            logger.info(msg)
         log_output = trainer.train_step(samples)
         if log_output is None:
             continue
+        acc = log_output['acc']
+        valid_token_num = log_output['valid_token_num']
+        epoch_acc += acc * valid_token_num
+        total_tokens += valid_token_num
+        if valid_token_num == 0:
+            print(samples['src_tokens'])
 
         # log mid-epoch stats
         stats = get_training_stats(trainer)
@@ -179,7 +240,12 @@ def train(args, trainer, task, epoch_itr,):
 
         if num_updates >= max_update:
             break
+    
 
+    epoch_acc /= total_tokens
+    print("train acc: ", epoch_acc)
+    logger.info("train acc: ")
+    logger.info(epoch_acc)
     # log end-of-epoch stats
     stats = get_training_stats(trainer)
     for k, meter in extra_meters.items():
@@ -223,12 +289,14 @@ def get_training_stats(trainer):
 def validate(args, trainer, task, epoch_itr, subsets):
     """Evaluate the model on the validation set(s) and return the losses."""
     valid_losses = []
+    epoch_acc = 0
+    total_tokens = 0
     for subset in subsets:
         # Initialize data iterator
         itr = task.get_batch_iterator(
             dataset=task.dataset(subset),
             max_tokens=args.max_tokens,
-            max_sentences=10,
+            max_sentences=5,
             max_positions=None,
             ignore_invalid_inputs=True,
             required_batch_size_multiple=1,
@@ -251,7 +319,10 @@ def validate(args, trainer, task, epoch_itr, subsets):
 
         for sample in progress:
             log_output = trainer.valid_step(sample)
-
+            acc = log_output['acc']
+            valid_token_num = log_output['valid_token_num']
+            epoch_acc += acc * valid_token_num
+            total_tokens += valid_token_num
             for k, v in log_output.items():
                 if k in ['loss', 'nll_loss', 'ntokens', 'nsentences', 'sample_size']:
                     continue
@@ -267,6 +338,12 @@ def validate(args, trainer, task, epoch_itr, subsets):
         progress.print(stats)
 
         valid_losses.append(stats['valid_loss'])
+    
+    
+    epoch_acc /= total_tokens
+    print("valid acc: ", epoch_acc)
+    logger.info("valid acc: ")
+    logger.info(epoch_acc)
     return valid_losses
 
 
@@ -358,29 +435,33 @@ def load_checkpoint(args, trainer, epoch_itr):
     return False
 
 
-def load_dataset_splits(task, splits):
+def load_dataset_splits(task, splits,max_len = None, debug = False):
     for split in splits:
-        task.load_dataset(split)
+        task.load_dataset(split, max_len = max_len, debug = debug)
 
 
 if __name__ == '__main__':
     parser = options.get_training_parser()
     parser.add_argument('--max_sentences', type = int, default = 4)
     parser.add_argument('--batch_size', type = int, default = 4)
-    # parser.add_argument('--update_freq', type = int, default = 1)
+    parser.add_argument('--update_freq', type = int, default = 1)
+    parser.add_argument('--freeze_encoder', action='store_true')
+    parser.add_argument('--debug', action = 'store_true')
+    parser.add_argument('--max_len', type = int, default = 0)
+
     # parser.add_argument('--lr', '--learning-rate', default=0.25,type = float)
 
 
     args = options.parse_args_and_arch(parser)
     # print(args)
     # args = parser.parse_args()
-    if args.distributed_port > 0 or args.distributed_init_method is not None:
-        from distributed_train import main as distributed_main
+    # if args.distributed_port > 0 or args.distributed_init_method is not None:
+    #     from distributed_train import main as distributed_main
 
-        distributed_main(args)
-    elif args.distributed_world_size > 1:
-        from multiprocessing_train import main as multiprocessing_main
+    #     distributed_main(args)
+    # elif args.distributed_world_size > 1:
+    #     from multiprocessing_train import main as multiprocessing_main
 
-        multiprocessing_main(args)
-    else:
-        main(args)
+    #     multiprocessing_main(args)
+    # else:
+    main(args)
