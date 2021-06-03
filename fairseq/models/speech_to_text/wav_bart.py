@@ -1,3 +1,4 @@
+from numpy.core.fromnumeric import argsort
 import torch
 import torch.nn as nn
 from fairseq.models.bart import BARTModel, BARTHubInterface
@@ -80,35 +81,49 @@ class ASRModel(nn.Module):
                 m.set_num_updates(num_updates)
         self.num_updates = num_updates
 
+    # def load_wav2vec_encoder(self,):
+    #     '''
+    #     return: fairseq.models.wav2vec.wav2vec2.Wav2Vec2Model
+    #     A bad implementation of model loading. Need further improvement
+    #     '''
+    #     task = None
+    #     from fairseq import tasks
+    #     archive_map = get_wav2vec2_hubs()
+    #     model_url = archive_map[self.wav2vec2_model_type]
+    #     resolved_archive_file = file_utils.cached_path(model_url, cache_dir = self.wav2vec2_cache_dir)
+    #     # state = torch.load(resolved_archive_file)
+    #     state = checkpoint_utils.load_checkpoint_to_cpu(resolved_archive_file)
+    #     # print(state['model'])
+    #     if "args" in state and state["args"] is not None:
+    #         cfg = convert_namespace_to_omegaconf(state["args"])
+    #     elif "cfg" in state and state["cfg"] is not None:
+    #         cfg = state["cfg"]
+    #     else:
+    #         raise RuntimeError(
+    #             f"Neither args nor cfg exist in state keys = {state.keys()}"
+    #         )
+    #     if task is None:
+    #         task = tasks.setup_task(cfg.task)
+
+    #     if "task_state" in state:
+    #         task.load_state_dict(state["task_state"])
+    #     model = task.build_model(cfg.model)
+    #     model.load_state_dict(state_dict = state['model'],strict = True,model_cfg = cfg.model)
+    #     return model
+
     def load_wav2vec_encoder(self,):
         '''
         return: fairseq.models.wav2vec.wav2vec2.Wav2Vec2Model
         A bad implementation of model loading. Need further improvement
         '''
-        task = None
-        from fairseq import tasks
-        archive_map = get_wav2vec2_hubs()
-        model_url = archive_map[self.wav2vec2_model_type]
-        resolved_archive_file = file_utils.cached_path(model_url, cache_dir = self.wav2vec2_cache_dir)
-        # state = torch.load(resolved_archive_file)
-        state = checkpoint_utils.load_checkpoint_to_cpu(resolved_archive_file)
-        # print(state['model'])
-        if "args" in state and state["args"] is not None:
-            cfg = convert_namespace_to_omegaconf(state["args"])
-        elif "cfg" in state and state["cfg"] is not None:
-            cfg = state["cfg"]
-        else:
-            raise RuntimeError(
-                f"Neither args nor cfg exist in state keys = {state.keys()}"
-            )
-        if task is None:
-            task = tasks.setup_task(cfg.task)
-
-        if "task_state" in state:
-            task.load_state_dict(state["task_state"])
-        model = task.build_model(cfg.model)
-        model.load_state_dict(state_dict = state['model'],strict = True,model_cfg = cfg.model)
+        x = torch.load(self.wav2vec2_cache_dir + "wav2vec_small.pt")
+        cfg = x['args']
+        cfg = convert_namespace_to_omegaconf(cfg)
+        param_dict = x['model']
+        model = Wav2Vec2Model(cfg.model)
+        model.load_state_dict(param_dict)
         return model
+
 
 
     def load_bart_decoder(self):
@@ -152,7 +167,7 @@ class ASRModel(nn.Module):
             return torch.nn.functional.log_softmax(net_output, dim = -1)
         else:
             return torch.nn.functional.softmax(net_output, dim = -1)
-        return probs.clamp(1e-10, 1.0).log() if log_probs else probs
+        # return probs.clamp(1e-10, 1.0).log() if log_probs else probs
     
     def get_targets(self, sample, net_output):
         """Get targets from either the sample or the net's output."""
@@ -188,11 +203,14 @@ class ASRModel(nn.Module):
         wav2vec2_output = self.wav2vec_encoder(source = batch_wav_input, padding_mask = padding_mask, features_only = True)
         output_hidden_states = wav2vec2_output['x'].transpose(0,1)
         padding_mask = wav2vec2_output['padding_mask']
+        # print(padding_mask)
         encode_output = {
             'encoder_out':[output_hidden_states],
             'encoder_padding_mask': [padding_mask]
         }
-        # print(encode_output['encoder_out'])
+        # print("encoder output: ",encode_output['encoder_out'][0])
+        # print("encoder output shape: ",encode_output['encoder_out'][0].size())
+
         # wav2vec2_output = self.wav2vec_encoder(batch_wav_input, padding_mask = padding_mask)['x']
         bart_output, _ = self.bart_decoder(prev_output_tokens = tgt_tokens,encoder_out = encode_output)
         return bart_output

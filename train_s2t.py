@@ -15,40 +15,47 @@ import os
 import math
 import torch
 
+# from fairseq import distributed_utils, options, progress_bar, tasks, utils
 from fairseq import distributed_utils, options, progress_bar, tasks, utils
+from fairseq.dataclass.utils import convert_namespace_to_omegaconf
+
 from fairseq.data import iterators
 from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 from fairseq.tasks.speech_to_text import SpeechToTextTask2
+
 import logging
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO) 
-# fh = logging.FileHandler("length_clip_output.txt", mode='w')
-# fh = logging.FileHandler("freeze_encoder_out.txt", mode='w')
-# fh = logging.FileHandler("length_clip_freeze_encoder_output.txt", mode='w')
 
-fh = logging.FileHandler("tmp.txt", mode='w')
+# fh = logging.FileHandler("logs/clip_freeze_1e-5.txt", mode='w')
+# fh = logging.FileHandler("logs/clip_nofreeze_1e-5.txt", mode='w')
+# fh = logging.FileHandler("logs/noclip_freeze_1e-5.txt", mode='w')
+# fh = logging.FileHandler("logs/noclip_nofreeze_1e-5.txt", mode='w')
+# fh = logging.FileHandler("logs/noclip_nofreeze_5e-6.txt", mode='w')
+# fh = logging.FileHandler("logs/noclip_freeze_5e-6.txt", mode='w')
+fh = logging.FileHandler("logs/tmp.txt", mode='w')
 
 logger.addHandler(fh)
 
 
 
 def main(args):
-    if args.max_tokens is None:
-        args.max_tokens = 16000*300
+    # if args.max_tokens is None:
+    # args.max_tokens = 16000*300
     print(args)
 
     # if not torch.cuda.is_available():
         # raise NotImplementedError('Training on CPU is not supported')
-    if not torch.cuda.is_available():
-        device = torch.device('cpu:0')
-    else:
-        torch.cuda.set_device(args.device_id)
-    # device = torch.device('cpu:0')    
-    # torch.cuda.set_device(device)
+    # if not torch.cuda.is_available():
+    #     device = torch.device('cpu:0')
+    # else:
+    #     torch.cuda.set_device(args.device_id)
+    device = torch.device('cuda')    
+    torch.cuda.set_device(0)
 
-    torch.manual_seed(args.seed)
+    torch.manual_seed(100)
 
     # Setup task, e.g., translation, language modeling, etc.
     tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
@@ -61,7 +68,9 @@ def main(args):
         print("debug... only read 1000 samples...")
     else:
         debug = False
-    
+
+    # debug = True
+    # max_len = None
     if args.max_len == 0:
         max_len = None
         print("do not set max length padding...")
@@ -70,19 +79,30 @@ def main(args):
         print("set max length %d ..."%(max_len))
 
     print("loading dataset ....")
+    logger.info("loading dataset ....")
     load_dataset_splits(task, ['train', 'dev', 'test'],max_len, debug)
     print("dataset loaded! ")
+    logger.info("dataset loaded! ")
     # Build model and criterion
     tgt_dict = task.tgt_dict
     vocab_size = len(task.tgt_dict)
     print("loading model....")
+    logger.info("loading model....")
     model = task.build_model(args, vocab_size = 50000)
+    # param_dict = torch.load("checkpoints/checkpoint_best.pt")
+    # param_dict = torch.load("encoder_freeze_checkpoints/checkpoint_last.pt")
+
+    # model.load_state_dict(param_dict["model"])
     print("model loaded!  ")
+    logger.info("model loaded!  ")
     criterion = task.build_criterion(args)
     print('|criterion {}'.format(criterion.__class__.__name__))
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
-    
+
+    # if args['freeze_encoder']:
+
     if args.freeze_encoder:
+        logger.info("freeze encoder...")
         print("freeze encoder parameters...")
         for p in model.wav2vec_encoder.parameters():
             p.requires_grad = False
@@ -118,6 +138,7 @@ def main(args):
     if batch_size is None:
         batch_size = 5
     print(batch_size)
+    logger.info("batch size: %d"%(batch_size))
     epoch_itr = task.get_batch_iterator(
         dataset=task.dataset(args.train_subset),
         max_tokens=args.max_tokens,
@@ -131,42 +152,47 @@ def main(args):
     )
 
     # Load the latest checkpoint if one is available
+    # load_checkpoint(args, trainer, epoch_itr)
     # if not load_checkpoint(args, trainer, epoch_itr):
     #     trainer.dummy_train_step([dummy_batch])
 
     #Freeze encoder weights if requested
-    # if args.freeze_encoder:
-    #     for p in model.encoder.parameters():
-    #         p.requires_grad = False
 
     # Train until the learning rate gets too small
     # max_epoch = args.max_epoch or math.inf
     # max_update = args.max_update or math.inf
-    max_epoch = 20
-    max_update = math.inf
+    max_epoch = 200
+    # max_update = math.inf
 
     lr = trainer.get_lr()
+
+    print("learning rate: ", lr)
+    logger.info("learning rate: ")
+    logger.info(lr)
     train_meter = StopwatchMeter()
     train_meter.start()
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
-    while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
+    # while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
+    while epoch_itr.epoch < max_epoch:
+
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 
-        if epoch_itr.epoch % args.validate_interval == 0:
-            print("validating...")
-            logger.info("validating...")
-            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
-            logger.info("valid loss: ")
-            logger.info(valid_losses)
-            print("valid loss: ", valid_losses)
+        # if epoch_itr.epoch % args.validate_interval == 0:
+        #     print("validating...")
+        #     logger.info("validating...")
+        #     valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+        #     logger.info("valid loss: ")
+        #     logger.info(valid_losses)
+        #     print("valid loss: ", valid_losses)
+        
         # only use first validation loss to update the learning rate
-        lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+        # lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
         # save checkpoint
-        if epoch_itr.epoch % args.save_interval == 0:
-            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        # if epoch_itr.epoch % 10 == 0:
+        # save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
     logger.info('| done training in {:.1f} seconds'.format(train_meter.sum))
@@ -180,6 +206,7 @@ def train(args, trainer, task, epoch_itr,):
     # else:
     #     update_freq = args.update_freq[-1]
     update_freq = args.update_freq[0]
+    # update_freq = 1
     print("update freq: ", update_freq)
     logger.info("update freq: ")
     logger.info(update_freq)
@@ -415,11 +442,11 @@ def save_checkpoint(args, trainer, epoch_itr, val_loss):
 
 def load_checkpoint(args, trainer, epoch_itr):
     """Load a checkpoint and replay dataloader to match."""
-    os.makedirs(args.save_dir, exist_ok=True)
+    # os.makedirs(args.save_dir, exist_ok=True)
     checkpoint_path = os.path.join(args.save_dir, args.restore_file)
     if os.path.isfile(checkpoint_path):
         extra_state = trainer.load_checkpoint(checkpoint_path, args.reset_optimizer, args.reset_lr_scheduler,
-                                              eval(args.optimizer_overrides))
+                                              )
         if extra_state is not None:
             # replay train iterator to match checkpoint
             epoch_itr.load_state_dict(extra_state['train_iterator'])
@@ -442,26 +469,29 @@ def load_dataset_splits(task, splits,max_len = None, debug = False):
 
 if __name__ == '__main__':
     parser = options.get_training_parser()
+    # group = parser.add_argument_group("other")
+    # group.add_argument('--max_sentences', type = int, default = 4)
+    # group.add_argument('--batch_size', type = int, default = 4)
+    # group.add_argument('--update_freq', type = int, default = 1)
+    # group.add_argument('--freeze_encoder', action='store_true')
+    # group.add_argument('--debug', action = 'store_true')
+    # group.add_argument('--max_len', type = int, default = 0)
+    # group.add_argument('--restore_file', type = str, default = "checkpoint_best.pt")
+
     parser.add_argument('--max_sentences', type = int, default = 4)
     parser.add_argument('--batch_size', type = int, default = 4)
     parser.add_argument('--update_freq', type = int, default = 1)
     parser.add_argument('--freeze_encoder', action='store_true')
     parser.add_argument('--debug', action = 'store_true')
     parser.add_argument('--max_len', type = int, default = 0)
+    parser.add_argument('--restore_file', type = str, default = "checkpoint_best.pt")
 
     # parser.add_argument('--lr', '--learning-rate', default=0.25,type = float)
 
 
     args = options.parse_args_and_arch(parser)
-    # print(args)
-    # args = parser.parse_args()
-    # if args.distributed_port > 0 or args.distributed_init_method is not None:
-    #     from distributed_train import main as distributed_main
 
-    #     distributed_main(args)
-    # elif args.distributed_world_size > 1:
-    #     from multiprocessing_train import main as multiprocessing_main
 
-    #     multiprocessing_main(args)
-    # else:
     main(args)
+    # cfg = convert_namespace_to_omegaconf(args)
+    # distributed_utils.call_main(cfg, main)

@@ -20,7 +20,13 @@ from fairseq.tasks.speech_to_text import SpeechToTextTask2
 
 
 def main(args):
-    model_path = ['./checkpoints/checkpoint5.pt']
+    # model_path = ['./checkpoints/checkpoint5.pt']
+    # model_path = ['./10_updates_checkpoints/checkpoint_last.pt']
+    # model_path = ['./10_updates_encoder_freeze_checkpoints/checkpoint_last.pt']
+    # model_path = ['./encoder_freeze_checkpoints/checkpoint_best.pt']
+
+    model_path = ['./noclip_nofreeze_1e-5/checkpoint10.pt']
+
     assert not args.sampling or args.nbest == args.beam, \
         '--sampling requires --nbest to be equal to --beam'
     assert args.replace_unk is None or args.raw_text, \
@@ -42,7 +48,7 @@ def main(args):
     tgt_dict = task.target_dictionary
 
     # Load ensemble
-    asr_model = task.build_model(args,vocab_size = len(tgt_dict))
+    asr_model = task.build_model(args,vocab_size = 50000)
     param_dict = torch.load(model_path[0])
     asr_model.load_state_dict(param_dict["model"])
     asr_model = asr_model.to('cuda')

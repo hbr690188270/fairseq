@@ -213,27 +213,10 @@ def _collate_frames(
         out[i, : v.size(0)] = v
     return out
 
-def pad(input_values,
-    max_length = None,):
-    if max_length == None:
-        max_length = max(frame.size(0) for frame in input_values)
-    
-    pad_values = []
-    attention_masks = []
-    for i in range(len(input_values)):
-        input_array = input_values[i]
-        if len(input_array) < max_length:
-            attention_mask = [0] * len(input_array) + [1] * (max_length - len(input_array))
-            input_array = np.concatenate([input_array, np.array([0] * (max_length - len(input_array)))])
-            pad_values.append(input_array)
-            attention_masks.append(attention_mask)
-        
-    encoded_inputs['tokens'] = np.array(pad_values)
-    encoded_inputs['attention_masks'] = np.array(attention_masks)
-    return encoded_inputs
+
 
 def _collate_frames2(
-    frames: List[torch.Tensor], is_audio_input: bool = True, max_len = None
+    frames: List[torch.Tensor], is_audio_input: bool = True, max_len = None, maxlen_clip = True
 ) -> torch.Tensor:
     """
     Convert a list of 2D frames into a padded 3D tensor
@@ -243,18 +226,28 @@ def _collate_frames2(
     Returns:
         3D tensor of size len(frames)*len_max*f_dim where len_max is max of L[i]
     """
-    if max_len == None:
-        max_len = max(frame.size(0) for frame in frames)
+    if maxlen_clip:  ## 设定max len 上限，不超过上限则使用frame batch中最长的为上限
+        if max_len == None:
+            max_len = max(frame.size(0) for frame in frames)
+        else:
+            audio_maxlen = max(frame.size(0) for frame in frames)
+            if audio_maxlen > max_len:
+                max_len = max_len
+            else:
+                max_len = audio_maxlen
+    else:
+        if max_len == None:
+            max_len = max(frame.size(0) for frame in frames)
     if is_audio_input:
         out = frames[0].new_zeros((len(frames), max_len))
-        pad = frames[0].new_zeros((len(frames), max_len))
+        pad = frames[0].new_ones((len(frames), max_len))
     else:
         out = frames[0].new_zeros((len(frames), max_len, frames[0].size(1)))
-        pad = frames[0].new_zeros((len(frames), max_len, frames[0].size(1)))
+        pad = frames[0].new_ones((len(frames), max_len, frames[0].size(1)))
 
     for i, v in enumerate(frames):
         out[i, : min([max_len, v.size(0)])] = v[:min([max_len, v.size(0)])]
-        pad[i, : min([max_len, v.size(0)])] = 1
+        pad[i, : min([max_len, v.size(0)])] = 0
     return out, pad
 
 
@@ -554,7 +547,7 @@ class SpeechToTextDataset2(FairseqDataset):
         max_frames = int(10*16000),
         tgt_dict = None,
         audio_tokenizer =ASRTokenizer(),
-        prepend_bos = True,
+        prepend_bos = False,
         max_len = 50,    ## 生成文本的最大长度，默认pad到50
         debug = False
     ):
@@ -607,7 +600,7 @@ class SpeechToTextDataset2(FairseqDataset):
                 fr_text_list.append(text)
 
         if debug:
-            read_num = 1000
+            read_num = 100
         else:
             read_num = len(audio_name_list)
         for i in range(len(audio_name_list[:read_num])):
@@ -617,7 +610,7 @@ class SpeechToTextDataset2(FairseqDataset):
             audio_length_list.append(len(audio_input))
             del audio_input
         print(len(fr_text_list), len(audio_length_list))
-        return audio_name_list, fr_text_list, np.array(audio_length_list)
+        return audio_name_list[:read_num], fr_text_list[:read_num], np.array(audio_length_list)[:read_num]
         # return audio_name_list[:1000], fr_text_list[:1000], np.array(audio_length_list[:1000])
         # return audio_name_list[:10], fr_text_list[:10], np.array(audio_length_list[:10])
 

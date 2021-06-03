@@ -51,7 +51,6 @@ def get_training_parser(default_task="speech_to_text2"):
 def get_generation_parser(interactive=False, default_task="speech_to_text2"):
     parser = get_parser("Generation", default_task)
     add_dataset_args(parser, gen=True)
-    add_distributed_training_args(parser, default_world_size=1)
     add_generation_args(parser)
     add_checkpoint_args(parser)
     if interactive:
@@ -80,52 +79,7 @@ def get_validation_parser(default_task=None):
     return parser
 
 
-def parse_args_and_arch(
-    parser: argparse.ArgumentParser,
-    input_args: List[str] = None,
-    parse_known: bool = False,
-    suppress_defaults: bool = False,
-    modify_parser: Optional[Callable[[argparse.ArgumentParser], None]] = None,
-):
-    """
-    Args:
-        parser (ArgumentParser): the parser
-        input_args (List[str]): strings to parse, defaults to sys.argv
-        parse_known (bool): only parse known arguments, similar to
-            `ArgumentParser.parse_known_args`
-        suppress_defaults (bool): parse while ignoring all default values
-        modify_parser (Optional[Callable[[ArgumentParser], None]]):
-            function to modify the parser, e.g., to set default values
-    """
-    if suppress_defaults:
-        # Parse args without any default values. This requires us to parse
-        # twice, once to identify all the necessary task/model args, and a second
-        # time with all defaults set to None.
-        args = parse_args_and_arch(
-            parser,
-            input_args=input_args,
-            parse_known=parse_known,
-            suppress_defaults=False,
-        )
-        suppressed_parser = argparse.ArgumentParser(add_help=False, parents=[parser])
-        suppressed_parser.set_defaults(**{k: None for k, v in vars(args).items()})
-        args = suppressed_parser.parse_args(input_args)
-        return argparse.Namespace(
-            **{k: v for k, v in vars(args).items() if v is not None}
-        )
-
-    from fairseq.models import ARCH_MODEL_REGISTRY, ARCH_CONFIG_REGISTRY, MODEL_REGISTRY
-
-    # Before creating the true parser, we need to import optional user module
-    # in order to eagerly import custom tasks, optimizers, architectures, etc.
-    usr_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    usr_parser.add_argument("--user-dir", default=None)
-    usr_args, _ = usr_parser.parse_known_args(input_args)
-    utils.import_user_module(usr_args)
-
-    if modify_parser is not None:
-        modify_parser(parser)
-
+def parse_args_and_arch(parser, input_args=None, parse_known=False):
     # The parser doesn't know about model/criterion/optimizer-specific args, so
     # we parse twice. First we parse the model/criterion/optimizer, then we
     # parse a second time after adding the *-specific arguments.
@@ -133,45 +87,27 @@ def parse_args_and_arch(
     args, _ = parser.parse_known_args(input_args)
 
     # Add model-specific args to parser.
-    if hasattr(args, "arch"):
+    if hasattr(args, 'arch'):
         model_specific_group = parser.add_argument_group(
-            "Model-specific configuration",
+            'Model-specific configuration',
             # Only include attributes which are explicitly given as command-line
             # arguments or which have default values.
             argument_default=argparse.SUPPRESS,
         )
-        if args.arch in ARCH_MODEL_REGISTRY:
-            ARCH_MODEL_REGISTRY[args.arch].add_args(model_specific_group)
-        elif args.arch in MODEL_REGISTRY:
-            MODEL_REGISTRY[args.arch].add_args(model_specific_group)
-        else:
-            raise RuntimeError()
-
-    if hasattr(args, "task"):
-        from fairseq.tasks import TASK_REGISTRY
-
-        TASK_REGISTRY[args.task].add_args(parser)
-    if getattr(args, "use_bmuf", False):
-        # hack to support extra args for block distributed data parallelism
-        from fairseq.optim.bmuf import FairseqBMUF
-
-        FairseqBMUF.add_args(parser)
+        ARCH_MODEL_REGISTRY[args.arch].add_args(model_specific_group)
 
     # Add *-specific args to parser.
-    from fairseq.registry import REGISTRIES
-
-    for registry_name, REGISTRY in REGISTRIES.items():
-        choice = getattr(args, registry_name, None)
-        if choice is not None:
-            cls = REGISTRY["registry"][choice]
-            if hasattr(cls, "add_args"):
-                cls.add_args(parser)
-            elif hasattr(cls, "__dataclass"):
-                gen_parser_from_dataclass(parser, cls.__dataclass())
-
-    # Modify the parser a second time, since defaults may have been reset
-    if modify_parser is not None:
-        modify_parser(parser)
+    if hasattr(args, 'criterion'):
+        CRITERION_REGISTRY[args.criterion].add_args(parser)
+    if hasattr(args, 'optimizer'):
+        OPTIMIZER_REGISTRY[args.optimizer].add_args(parser)
+    if hasattr(args, 'lr_scheduler'):
+        LR_SCHEDULER_REGISTRY[args.lr_scheduler].add_args(parser)
+    if hasattr(args, 'task'):
+        TASK_REGISTRY[args.task].add_args(parser)
+        if args.task == "adversarial_translation":
+            old_parse_known = parse_known
+            parse_known = True
 
     # Parse a second time.
     if parse_known:
@@ -179,32 +115,30 @@ def parse_args_and_arch(
     else:
         args = parser.parse_args(input_args)
         extra = None
-    # Post-process args.
-    if (
-        hasattr(args, "batch_size_valid") and args.batch_size_valid is None
-    ) or not hasattr(args, "batch_size_valid"):
-        args.batch_size_valid = args.batch_size
-    if hasattr(args, "max_tokens_valid") and args.max_tokens_valid is None:
-        args.max_tokens_valid = args.max_tokens
-    if getattr(args, "memory_efficient_fp16", False):
-        args.fp16 = True
-    if getattr(args, "memory_efficient_bf16", False):
-        args.bf16 = True
-    args.tpu = getattr(args, "tpu", False)
-    args.bf16 = getattr(args, "bf16", False)
-    if args.bf16:
-        args.tpu = True
-    if args.tpu and args.fp16:
-        raise ValueError("Cannot combine --fp16 and --tpu, use --bf16 on TPUs")
 
-    if getattr(args, "seed", None) is None:
-        args.seed = 1  # default seed for training
-        args.no_seed_provided = True
-    else:
-        args.no_seed_provided = False
+    # Multitask criterion
+    if args.task == "adversarial_translation":
+        parse_known = old_parse_known
+        if not args.translation:
+            CRITERION_REGISTRY[args.criterion1].add_args(parser)
+            CRITERION_REGISTRY[args.criterion2].add_args(parser)
+            # Parse a third time.
+            if parse_known:
+                args, extra = parser.parse_known_args(input_args)
+            else:
+                args = parser.parse_args(input_args)
+                extra = None
+
+    # Post-process args.
+    if hasattr(args, 'lr'):
+        args.lr = eval_str_list(args.lr, type=float)
+    if hasattr(args, 'update_freq'):
+        args.update_freq = eval_str_list(args.update_freq, type=int)
+    if hasattr(args, 'max_sentences_valid') and args.max_sentences_valid is None:
+        args.max_sentences_valid = args.max_sentences
 
     # Apply architecture configuration.
-    if hasattr(args, "arch") and args.arch in ARCH_CONFIG_REGISTRY:
+    if hasattr(args, 'arch'):
         ARCH_CONFIG_REGISTRY[args.arch](args)
 
     if parse_known:
@@ -293,7 +227,7 @@ def add_dataset_args(parser, train=False, gen=False):
     group = parser.add_argument_group('Dataset and data loading')
     group.add_argument('--skip-invalid-size-inputs-valid-test', action='store_true',
                        help='ignore too long or too short lines in valid and test set')
-    group.add_argument('--max-tokens', type=int, metavar='N',
+    group.add_argument('--max-tokens', type=int, metavar='N',default = 300*16000,
                        help='maximum number of tokens in a batch')
     group.add_argument('--max-sentences', '--batch-size', type=int, metavar='N',
                        help='maximum number of sentences in a batch')
@@ -317,7 +251,9 @@ def add_dataset_args(parser, train=False, gen=False):
     return group
 
 def add_distributed_training_args(parser):
-    group = parser.add_argument_group('Distributed training')
+    # group = parser.add_argument_group('Distributed training')
+    group = parser.add_argument_group('distributed_training')
+
     group.add_argument('--distributed-world-size', type=int, metavar='N',
                        default=torch.cuda.device_count(),
                        help='total number of GPUs across all nodes (default: all visible GPUs)')
@@ -355,14 +291,14 @@ def add_optimization_args(parser):
     group.add_argument('--sentence-avg', action='store_true',
                        help='normalize gradients by the number of sentences in a batch'
                             ' (default is to normalize by number of tokens)')
-    group.add_argument('--update-freq', default=[1], type = list,
+    group.add_argument('--update-freq', default=[2], type = list,
                        help='update parameters every N_i batches, when in epoch i')
 
     # Optimizer definitions can be found under fairseq/optim/
     group.add_argument('--optimizer', default='adam', metavar='OPT',
                        choices=OPTIMIZER_REGISTRY.keys(),
                        help='Optimizer')
-    group.add_argument('--lr', '--learning-rate', default=[0.25],type = list, 
+    group.add_argument('--lr', '--learning-rate', default=[1e-3],type = list, 
                        help='learning rate for the first N epochs; all epochs >N using LR_N'
                             ' (note: this may be interpreted differently depending on --lr-scheduler)')
     group.add_argument('--momentum', default=0.99, type=float, metavar='M',
@@ -376,7 +312,7 @@ def add_optimization_args(parser):
                        help='Learning Rate Scheduler')
     group.add_argument('--lr-shrink', default=0.1, type=float, metavar='LS',
                        help='learning rate shrink factor for annealing, lr_new = (lr * lr_shrink)')
-    group.add_argument('--min-lr', default=1e-5, type=float, metavar='LR',
+    group.add_argument('--min-lr', default=1e-6, type=float, metavar='LR',
                        help='minimum learning rate')
     group.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
                        help='minimum loss scale (for FP16 training)')
@@ -505,10 +441,15 @@ def add_model_args(parser):
     # )
 
     # Criterion definitions can be found under fairseq/criterions/
+    # group.add_argument(
+    #     '--criterion', default='label_smoothed_cross_entropy', metavar='CRIT',
+    #     choices=CRITERION_REGISTRY.keys(),
+    #     help='Training Criterion',
+    # )
     group.add_argument(
-        '--criterion', default='label_smoothed_cross_entropy', metavar='CRIT',
-        choices=CRITERION_REGISTRY.keys(),
-        help='Training Criterion',
+    '--criterion', default='cross_entropy_2', metavar='CRIT',
+    choices=CRITERION_REGISTRY.keys(),
+    help='Training Criterion',
     )
 
     return group

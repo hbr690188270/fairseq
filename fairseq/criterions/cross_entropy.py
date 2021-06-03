@@ -126,13 +126,15 @@ class CrossEntropyCriterion(FairseqCriterion):
 
     def compute_loss(self, model, net_output, sample, reduce=True):
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
+        # for item in lprobs:
+        #     print("orig_pred: ", torch.argmax(item, dim = -1))
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
         loss = F.nll_loss(
             lprobs,
             target,
             ignore_index=self.padding_idx,
-            reduction="sum" if reduce else "none",
+            reduction="mean" if reduce else "none",
         )
         # print(torch.argmax(lprobs, dim = -1))
         # for item in lprobs:
@@ -146,7 +148,9 @@ class CrossEntropyCriterion(FairseqCriterion):
         valid_tokens = select_target.size(0)
         # print("token num: ", valid_tokens)
         # print("acc: ",acc)
-        # print("pred: ", torch.argmax(select_lprobs, dim = -1))
+        print("target: ", select_target)
+        print("pred: ", torch.argmax(select_lprobs, dim = -1))
+        # print()
         # print("weight: ")
         # print(model.bart_decoder.output_projection.weight)
         return loss, acc, valid_tokens
