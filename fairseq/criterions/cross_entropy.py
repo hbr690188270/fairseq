@@ -92,7 +92,7 @@ class CrossEntropyCriterion(FairseqCriterion):
         return True
 
 @register_criterion("cross_entropy_2", dataclass=CrossEntropyCriterionConfig)
-class CrossEntropyCriterion(FairseqCriterion):
+class CrossEntropyCriterion2(FairseqCriterion):
     def __init__(self, task, sentence_avg):
         super().__init__(task)
         self.sentence_avg = sentence_avg
@@ -125,9 +125,16 @@ class CrossEntropyCriterion(FairseqCriterion):
         return loss, sample_size, logging_output
 
     def compute_loss(self, model, net_output, sample, reduce=True):
+        # lprobs = F.softmax(net_output, dim = -1).view(-1, net_output.size(-1))
+
+        # print(net_output.size())
+        # lprobs = net_output.view(-1, net_output.size(-1))
+        # target = sample['target'].view(-1)
+        # loss = F.cross_entropy(lprobs, target, reduction = 'mean', ignore_index= self.padding_idx)
+
+
+
         lprobs = model.get_normalized_probs(net_output, log_probs=True)
-        # for item in lprobs:
-        #     print("orig_pred: ", torch.argmax(item, dim = -1))
         lprobs = lprobs.view(-1, lprobs.size(-1))
         target = model.get_targets(sample, net_output).view(-1)
         loss = F.nll_loss(
@@ -148,8 +155,8 @@ class CrossEntropyCriterion(FairseqCriterion):
         valid_tokens = select_target.size(0)
         # print("token num: ", valid_tokens)
         # print("acc: ",acc)
-        print("target: ", select_target)
-        print("pred: ", torch.argmax(select_lprobs, dim = -1))
+        # print("target: ", select_target)
+        # print("pred: ", torch.argmax(select_lprobs, dim = -1))
         # print()
         # print("weight: ")
         # print(model.bart_decoder.output_projection.weight)

@@ -7,11 +7,14 @@ import logging
 import os.path as op
 from argparse import Namespace
 
+from torch.nn.modules.loss import CrossEntropyLoss
+
 from fairseq.data import Dictionary, encoders
-from fairseq.data.audio.speech_to_text_dataset import SpeechToTextDataset2
+from fairseq.data.audio.speech_to_text_dataset import SpeechToTextDataset2,SpeechToTextDataset_En, SpeechToTextDataset_ENBart
 from fairseq.tasks import LegacyFairseqTask, register_task
-from fairseq.models.speech_to_text.wav_bart import ASRModel
+from fairseq.models.speech_to_text.wav_bart import ASRModel, ASRModel_lstm_decoder, ASRModel_transformer_decoder, ASRModel_v2
 import pickle
+from fairseq.criterions import label_smoothed_cross_entropy, cross_entropy
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +176,9 @@ class SpeechToTextTask2(LegacyFairseqTask):
     def setup_task(cls, args, tgt_dict_path):
         with open(tgt_dict_path,'rb') as f:
             tgt_dict = pickle.load(f)  ## Dictironary
-        tgt_dict.finalize(nwords = 50000)
+        # tgt_dict.finalize(nwords = 50000)
+        # tgt_dict.finalize()
+
         print("bos idx: ", tgt_dict.bos_index)
         print("pad idx: ", tgt_dict.pad_index)
         print("eos idx: ", tgt_dict.eos_index)
@@ -195,13 +200,21 @@ class SpeechToTextTask2(LegacyFairseqTask):
         #         'Please set "--ignore-prefix-size 1" since '
         #         "target language ID token is prepended as BOS."
         #     )
-        return criterions.build_criterion(args, self)
+        # return criterions.build_criterion(args, self)
+        return label_smoothed_cross_entropy.LabelSmoothedCrossEntropyCriterion(self, sentence_avg = False)
+        # return cross_entropy.CrossEntropyCriterion2(self, sentence_avg = False)
 
-    def load_dataset(self, split, max_len = None, debug = False):
+    def load_dataset(self, split, max_len = None, debug = False, max_frames = None, bpe_tokenizer = None):
         is_train_split = split.startswith("train")
         # pre_tokenizer = self.build_tokenizer(self.args)
         # bpe_tokenizer = self.build_bpe(self.args)
-        self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict, max_len = 50, debug = debug)
+        # self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict, 
+        #                     max_len = None, debug = debug, max_frames = max_frames)
+        # self.datasets[split] = SpeechToTextDataset_En(split = split,tgt_dict = self.tgt_dict, 
+                            # max_len = None, debug = debug, max_frames = max_frames)
+        self.datasets[split] = SpeechToTextDataset_ENBart(split = split,tgt_dict = self.tgt_dict, 
+                            max_len = None, debug = debug, max_frames = max_frames, bpe_tokenizer = bpe_tokenizer)                            
+
 
 
     @property
@@ -216,7 +229,11 @@ class SpeechToTextTask2(LegacyFairseqTask):
         return self.args.max_source_positions, self.args.max_target_positions
 
     def build_model(self, args, vocab_size):
-        return ASRModel(vocab_size = vocab_size, word_dictionary = self.tgt_dict)
+        # return ASRModel(vocab_size = vocab_size, word_dictionary = self.tgt_dict)
+        # return ASRModel_lstm_decoder(vocab_size = vocab_size, word_dictionary = self.tgt_dict)
+        # return ASRModel_transformer_decoder(vocab_size = vocab_size, word_dictionary = self.tgt_dict, args = args)
+        return ASRModel_v2(vocab_size = vocab_size, word_dictionary = self.tgt_dict)
+
 
     def build_generator(
         self,

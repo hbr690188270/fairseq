@@ -75,7 +75,7 @@ class SequenceGenerator(nn.Module):
             if symbols_to_strip_from_output is not None
             else {self.eos}
         )
-        self.vocab_size = len(tgt_dict)
+        self.vocab_size = 51201
         self.beam_size = beam_size
         # the max beam size is the dictionary size - 1, since we never select pad
         self.beam_size = min(beam_size, self.vocab_size - 1)
@@ -98,7 +98,7 @@ class SequenceGenerator(nn.Module):
         assert temperature > 0, "--temperature must be greater than 0"
 
         self.search = (
-            search.BeamSearch(tgt_dict) if search_strategy is None else search_strategy
+            search.BeamSearch(tgt_dict).to('cuda') if search_strategy is None else search_strategy
         )
         # We only need to set src_lengths in LengthConstrainedBeamSearch.
         # As a module attribute, setting it would break in multithread
@@ -156,7 +156,7 @@ class SequenceGenerator(nn.Module):
             if timer is not None:
                 timer.start()
             with torch.no_grad():
-                hypos = self.generate(encoder_input)
+                hypos = self.generate(sample)
             if timer is not None:
                 timer.stop(sum(len(h[0]["tokens"]) for h in hypos))
             for i, id in enumerate(s["id"].data):
@@ -170,7 +170,9 @@ class SequenceGenerator(nn.Module):
                 yield id, src, ref, hypos[i]
 
     @torch.no_grad()
-    def generate(self, models, sample: Dict[str, Dict[str, Tensor]], **kwargs) -> List[List[Dict[str, Tensor]]]:
+    # def generate(self, models, sample: Dict[str, Dict[str, Tensor]], **kwargs) -> List[List[Dict[str, Tensor]]]:
+    def generate(self, sample: Dict[str, Dict[str, Tensor]], **kwargs) -> List[List[Dict[str, Tensor]]]:
+
         """Generate translations. Match the api of other fairseq generators.
 
         Args:
@@ -199,7 +201,10 @@ class SequenceGenerator(nn.Module):
                 for i in range(self.model.models_size)
             ],
         )
+
         net_input = sample["net_input"]
+        target = sample["target"]
+        # print(net_input.keys())
 
         if "src_tokens" in net_input:
             src_tokens = net_input["src_tokens"]
@@ -219,6 +224,7 @@ class SequenceGenerator(nn.Module):
 
         # bsz: total number of sentences in beam
         # Note that src_tokens may have more than 2 dimensions (i.e. audio features)
+        src_tokens = src_tokens.to('cuda')
         bsz, src_len = src_tokens.size()[:2]
         beam_size = self.beam_size
 
@@ -248,6 +254,8 @@ class SequenceGenerator(nn.Module):
         new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
         new_order = new_order.to(src_tokens.device).long()
         encoder_outs = self.model.reorder_encoder_out(encoder_outs, new_order)
+        # print(encoder_outs)
+        # pause = input("????")
         # ensure encoder_outs is a List.
         assert encoder_outs is not None
 
@@ -255,13 +263,20 @@ class SequenceGenerator(nn.Module):
         scores = (
             torch.zeros(bsz * beam_size, max_len + 1).to(src_tokens).float()
         )  # +1 for eos; pad is never chosen for scoring
+
         tokens = (
             torch.zeros(bsz * beam_size, max_len + 2)
             .to(src_tokens)
             .long()
-            .fill_(self.pad)
+            .fill_(self.eos).to('cuda')
         )  # +2 for eos and pad
-        tokens[:, 0] = self.eos if bos_token is None else bos_token
+
+        # print(src_tokens)
+        # print(tokens)
+        # print(tokens.size())
+        # tokens[:, 0] = self.eos if bos_token is None else bos_token
+        # tokens[:, 0] = self.tgt_dict.bos_index
+
         attn: Optional[Tensor] = None
 
         # A list that indicates candidates that should be ignored.
@@ -303,30 +318,26 @@ class SequenceGenerator(nn.Module):
         else:
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
+        print("target: ", target)
+        prev_output_tokens = torch.ones_like(target)
+        prev_output_tokens[0,:] = target[-1,:]
+        prev_output_tokens[1:,:] = target[:-1, :]
+        prev_output_tokens = prev_output_tokens.to("cuda")
         for step in range(max_len + 1):  # one extra step for EOS marker
-            # reorder decoder internal states based on the prev choice of beams
-            if reorder_state is not None:
-                if batch_idxs is not None:
-                    # update beam indices to take into account removed sentences
-                    corr = batch_idxs - torch.arange(batch_idxs.numel()).type_as(
-                        batch_idxs
-                    )
-                    reorder_state.view(-1, beam_size).add_(
-                        corr.unsqueeze(-1) * beam_size
-                    )
-                    original_batch_idxs = original_batch_idxs[batch_idxs]
-                self.model.reorder_incremental_state(incremental_states, reorder_state)
-                encoder_outs = self.model.reorder_encoder_out(
-                    encoder_outs, reorder_state
-                )
+            # print("step: ", step)
 
+            # print(tokens[:, : step + 1])
+            # print(tokens.size())
             lprobs, avg_attn_scores = self.model.forward_decoder(
                 tokens[:, : step + 1],
                 encoder_outs,
                 incremental_states,
                 self.temperature,
+                prev_output_tokens
             )
-
+            # print(lprobs.size())
+            # print(torch.argmax(lprobs, dim = -1))
+            # print()
             if self.lm_model is not None:
                 lm_out = self.lm_model(tokens[:, : step + 1])
                 probs = self.lm_model.get_normalized_probs(
@@ -388,7 +399,6 @@ class SequenceGenerator(nn.Module):
                 tokens[:, : step + 1],
                 original_batch_idxs,
             )
-
             # cand_bbsz_idx contains beam indices for the top candidate
             # hypotheses, with a range of values: [0, bsz*beam_size),
             # and dimensions: [bsz, cand_size]
@@ -405,7 +415,7 @@ class SequenceGenerator(nn.Module):
             eos_bbsz_idx = torch.masked_select(
                 cand_bbsz_idx[:, :beam_size], mask=eos_mask[:, :beam_size]
             )
-
+            # print(eos_bbsz_idx)
             finalized_sents: List[int] = []
             if eos_bbsz_idx.numel() > 0:
                 eos_scores = torch.masked_select(
@@ -426,7 +436,6 @@ class SequenceGenerator(nn.Module):
                     max_len,
                 )
                 num_remaining_sent -= len(finalized_sents)
-
             assert num_remaining_sent >= 0
             if num_remaining_sent == 0:
                 break
@@ -754,9 +763,22 @@ class EnsembleModel(nn.Module):
 
     @torch.jit.export
     def forward_encoder(self, net_input: Dict[str, Tensor]):
-        if not self.has_encoder():
-            return None
-        return [model.encoder.forward_torchscript(net_input) for model in self.models]
+        # if not self.has_encoder():
+        #     return None
+        batch_wav_input = net_input['src_tokens'].float().to('cuda')
+        tgt_tokens = net_input['prev_output_tokens'].to('cuda')
+        padding_mask = net_input['pad_masks'].to('cuda')
+
+        wav2vec2_output = self.models[0].wav2vec_encoder.forward(source = batch_wav_input, padding_mask = padding_mask, features_only = True)
+
+
+        output_hidden_states = wav2vec2_output['x'].transpose(0,1)
+        padding_mask = wav2vec2_output['padding_mask']
+        encoder_outs = {
+            'encoder_out':[output_hidden_states],
+            'encoder_padding_mask': [padding_mask]
+        }
+        return [encoder_outs]
 
     @torch.jit.export
     def forward_decoder(
@@ -765,46 +787,43 @@ class EnsembleModel(nn.Module):
         encoder_outs: List[Dict[str, List[Tensor]]],
         incremental_states: List[Dict[str, Dict[str, Optional[Tensor]]]],
         temperature: float = 1.0,
+        prev_output_tokens = None
     ):
         log_probs = []
         avg_attn: Optional[Tensor] = None
         encoder_out: Optional[Dict[str, List[Tensor]]] = None
         for i, model in enumerate(self.models):
-            if self.has_encoder():
-                encoder_out = encoder_outs[i]
+            # if self.has_encoder():
+            encoder_out = encoder_outs[i]
+
             # decode each model
             if self.has_incremental_states():
-                decoder_out = model.decoder.forward(
+                decoder_out = model.bart_decoder.forward(
                     tokens,
                     encoder_out=encoder_out,
                     incremental_state=incremental_states[i],
                 )
             else:
-                decoder_out = model.decoder.forward(tokens, encoder_out=encoder_out)
+                # decoder_out = model.bart_decoder(tokens, encoder_out=encoder_out, prev_output_tokens = prev_output_tokens)
+                decoder_out = model.bart_decoder(encoder_out=encoder_out, prev_output_tokens = prev_output_tokens[:,0,:])
+
 
             attn: Optional[Tensor] = None
-            decoder_len = len(decoder_out)
-            if decoder_len > 1 and decoder_out[1] is not None:
-                if isinstance(decoder_out[1], Tensor):
-                    attn = decoder_out[1]
-                else:
-                    attn_holder = decoder_out[1]["attn"]
-                    if isinstance(attn_holder, Tensor):
-                        attn = attn_holder
-                    elif attn_holder is not None:
-                        attn = attn_holder[0]
-                if attn is not None:
-                    attn = attn[:, -1, :]
-
-            decoder_out_tuple = (
-                decoder_out[0][:, -1:, :].div_(temperature),
-                None if decoder_len <= 1 else decoder_out[1],
-            )
+            
+            probs = decoder_out[0]
+            print(probs.size())
+            print(torch.argmax(probs, dim = -1))
+            probs = probs[:, -1:, :].div_(temperature)
 
             probs = model.get_normalized_probs(
-                decoder_out_tuple, log_probs=True, sample=None
+                probs, log_probs=True, sample=None
             )
+            # print(torch.argmax(probs, dim = -1))
+            print()
             probs = probs[:, -1, :]
+            # pause = input("prob2")
+            # print("output: ", torch.argmax(probs, dim = -1))
+            # pause = input("ddd")
             if self.models_size == 1:
                 return probs, attn
 
@@ -838,12 +857,12 @@ class EnsembleModel(nn.Module):
             *encoder_out* rearranged according to *new_order*
         """
         new_outs: List[Dict[str, List[Tensor]]] = []
-        if not self.has_encoder():
-            return new_outs
+        # if not self.has_encoder():
+        #     return new_outs
         for i, model in enumerate(self.models):
             assert encoder_outs is not None
             new_outs.append(
-                model.encoder.reorder_encoder_out(encoder_outs[i], new_order)
+                reorder_encoder_out(encoder_outs[i], new_order)
             )
         return new_outs
 
@@ -968,3 +987,27 @@ class EnsembleModelWithAlignment(EnsembleModel):
         if len(self.models) > 1:
             avg_attn.div_(len(self.models))
         return avg_attn
+
+def reorder_encoder_out(encoder_out, new_order):
+    if encoder_out['encoder_out'] is not None:
+        encoder_out['encoder_out'] = (
+            encoder_out['encoder_out'][0].index_select(1, new_order),
+        )
+    if encoder_out['encoder_padding_mask'] is not None:
+        encoder_out['encoder_padding_mask'] = [
+            encoder_out['encoder_padding_mask'][0].index_select(0, new_order)]
+
+    return encoder_out
+
+# def reorder_encoder_out(encoder_out, new_order):
+#     if encoder_out['encoder_out'] is not None:
+#         encoder_out['encoder_out'] = (
+#             torch.zeros_like(encoder_out['encoder_out'][0]).index_select(1, new_order),
+#         )
+#     if encoder_out['encoder_padding_mask'] is not None:
+#         encoder_out['encoder_padding_mask'] = [
+#             encoder_out['encoder_padding_mask'][0].index_select(0, new_order)]
+
+#     return encoder_out
+
+

@@ -14,6 +14,7 @@ import itertools
 import os
 import math
 import torch
+import copy
 
 # from fairseq import distributed_utils, options, progress_bar, tasks, utils
 from fairseq import distributed_utils, options, progress_bar, tasks, utils
@@ -23,23 +24,45 @@ from fairseq.data import iterators
 from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 from fairseq.tasks.speech_to_text import SpeechToTextTask2
-
+from fairseq.data.encoders import gpt2_bpe
 import logging
-
+from fairseq.models.speech_to_text.wav_bart import BART_Tokenizer
 logger = logging.getLogger()
 logger.setLevel(logging.INFO) 
 
-# fh = logging.FileHandler("logs/clip_freeze_1e-5.txt", mode='w')
-# fh = logging.FileHandler("logs/clip_nofreeze_1e-5.txt", mode='w')
-# fh = logging.FileHandler("logs/noclip_freeze_1e-5.txt", mode='w')
-# fh = logging.FileHandler("logs/noclip_nofreeze_1e-5.txt", mode='w')
-# fh = logging.FileHandler("logs/noclip_nofreeze_5e-6.txt", mode='w')
-# fh = logging.FileHandler("logs/noclip_freeze_5e-6.txt", mode='w')
-fh = logging.FileHandler("logs/tmp.txt", mode='w')
+# log_file = "bart_1e-4"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "bart_1e-5"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "enc_freeze_1e-4"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "enc_freeze_1e-5"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "pretrain_bart_enc_freeze_1e-4"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "pretrain_bart_1e-4"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+# log_file = "pretrain_bart_1e-5"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+
+# log_file = "enc_freeze_1e-5"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+
+log_file = "test"
+fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
 
 logger.addHandler(fh)
 
 
+from fairseq.models.bart import BARTModel, BARTHubInterface
 
 def main(args):
     # if args.max_tokens is None:
@@ -57,10 +80,20 @@ def main(args):
 
     torch.manual_seed(100)
 
+    # bart = BARTModel.from_pretrained('/data1/private/houbairu/model_cache/bart_model/bart.base/', checkpoint_file='model.pt')
+    # bpe_tokenizer = bart.bpe
+    bpe_tokenizer = gpt2_bpe.GPT2BPE(gpt2_bpe.GPT2BPEConfig())
+
     # Setup task, e.g., translation, language modeling, etc.
-    tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
+    # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
+    # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_en_dictionary.pkl'
+    tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
+
     task = SpeechToTextTask2.setup_task(args, tgt_dict_path)
-    # task = tasks.setup_task(args)
+    tgt_dict = task.tgt_dict
+    vocab_size = len(task.tgt_dict)
+
+    bart_tokenizer = BART_Tokenizer(bpe_tokenizer, tgt_dict)
 
     # Load dataset splits
     if args.debug:
@@ -69,8 +102,6 @@ def main(args):
     else:
         debug = False
 
-    # debug = True
-    # max_len = None
     if args.max_len == 0:
         max_len = None
         print("do not set max length padding...")
@@ -80,19 +111,16 @@ def main(args):
 
     print("loading dataset ....")
     logger.info("loading dataset ....")
-    load_dataset_splits(task, ['train', 'dev', 'test'],max_len, debug)
+    load_dataset_splits(task, ['train', 'dev', 'test'],max_len, debug, bart_tokenizer)
     print("dataset loaded! ")
     logger.info("dataset loaded! ")
     # Build model and criterion
-    tgt_dict = task.tgt_dict
-    vocab_size = len(task.tgt_dict)
+
     print("loading model....")
     logger.info("loading model....")
-    model = task.build_model(args, vocab_size = 50000)
-    # param_dict = torch.load("checkpoints/checkpoint_best.pt")
-    # param_dict = torch.load("encoder_freeze_checkpoints/checkpoint_last.pt")
+    model = task.build_model(args, vocab_size = vocab_size)
+    print("vocab size: ", model.bart_decoder.embed_tokens.weight.size())
 
-    # model.load_state_dict(param_dict["model"])
     print("model loaded!  ")
     logger.info("model loaded!  ")
     criterion = task.build_criterion(args)
@@ -106,27 +134,20 @@ def main(args):
         print("freeze encoder parameters...")
         for p in model.wav2vec_encoder.parameters():
             p.requires_grad = False
-    
-    # for p in model.bart_decoder.parameters():
-    #     print(p, p.requires_grad)
 
-    # Make a dummy batch to (i) warm the caching allocator and (ii) as a
-    # placeholder DistributedDataParallel when there's an uneven number of
-    # batches per worker.
-    # max_positions = utils.resolve_max_positions(
-    #     task.max_positions(),
-    #     model.max_positions(),
-    # )
+    if args.freeze_decoder:
+        logger.info("freeze decoder...")
+        print("freeze encoder parameters...")
+        for p in model.bart_decoder.parameters():
+            p.requires_grad = False
+
     max_positions = None
-    # dummy_batch = task.dataset('train').get_dummy_batch(args.max_tokens, max_positions)
 
-    # Build trainer
-    # trainer = Trainer(args, task, model, criterion, dummy_batch)
-    # print("arch: ",args.arch)
 
     trainer = Trainer(args, task, model, criterion)
     trainer.consolidate_optimizer()
 
+    print(trainer._optimizer._optimizer)
     print('| training on {} GPUs'.format(args.distributed_world_size))
     print('| max tokens per GPU = {} and max sentences per GPU = {}'.format(
         args.max_tokens,
@@ -161,7 +182,7 @@ def main(args):
     # Train until the learning rate gets too small
     # max_epoch = args.max_epoch or math.inf
     # max_update = args.max_update or math.inf
-    max_epoch = 200
+    max_epoch = 20
     # max_update = math.inf
 
     lr = trainer.get_lr()
@@ -173,29 +194,59 @@ def main(args):
     train_meter.start()
     valid_losses = [None]
     valid_subsets = args.valid_subset.split(',')
+    acc_list = []
+    loss_list = []
     # while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
     while epoch_itr.epoch < max_epoch:
 
         # train for one epoch
-        train(args, trainer, task, epoch_itr)
+        print("epoch: ", epoch_itr.epoch)
+        logger.info("epoch: ")
+        logger.info(epoch_itr.epoch)
+        print("lr: ", [x['lr'] for x in trainer.optimizer.param_groups])
+        acc, loss = train(args, trainer, task, epoch_itr)
+        acc_list.append(acc)
+        loss_list.append(loss)
 
-        # if epoch_itr.epoch % args.validate_interval == 0:
-        #     print("validating...")
-        #     logger.info("validating...")
-        #     valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
-        #     logger.info("valid loss: ")
-        #     logger.info(valid_losses)
-        #     print("valid loss: ", valid_losses)
-        
-        # only use first validation loss to update the learning rate
-        # lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
+        if epoch_itr.epoch > 15:
+            trainer.optimizer.param_groups[0]['lr'] = 1e-6
+            trainer.optimizer.param_groups[1]['lr'] = 1e-5
+
+        # if epoch_itr.epoch > 100:
+        #     trainer.optimizer.param_groups[0]['lr'] = 1e-8
+        #     trainer.optimizer.param_groups[1]['lr'] = 5e-7
+
+        # if epoch_itr.epoch > 150:
+        #     trainer.optimizer.param_groups[0]['lr'] = 1e-8
+        #     trainer.optimizer.param_groups[1]['lr'] = 1e-7
+
+        # if epoch_itr.epoch > 200:
+        #     trainer.optimizer.param_groups[0]['lr'] = 1e-9
+        #     trainer.optimizer.param_groups[1]['lr'] = 1e-8
+
+
+        if epoch_itr.epoch % args.validate_interval == 0:
+            print("validating...")
+            logger.info("validating...")
+            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+            logger.info("valid loss: ")
+            logger.info(valid_losses)
+            print("valid loss: ", valid_losses)
 
         # save checkpoint
-        # if epoch_itr.epoch % 10 == 0:
-        # save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        if epoch_itr.epoch % 2 == 0:
+            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        print()
+        logger.info("")
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
     logger.info('| done training in {:.1f} seconds'.format(train_meter.sum))
+    with open(log_file + "_acc.txt",'w', encoding = 'utf-8') as f:
+        f.write(' '.join([str(x) for x in acc_list]))
+
+    with open(log_file + "_loss.txt",'w', encoding = 'utf-8') as f:
+        f.write(' '.join([str(x) for x in loss_list]))
+
 
 def train(args, trainer, task, epoch_itr,):
     """Train the model for one epoch."""
@@ -207,9 +258,9 @@ def train(args, trainer, task, epoch_itr,):
     #     update_freq = args.update_freq[-1]
     update_freq = args.update_freq[0]
     # update_freq = 1
-    print("update freq: ", update_freq)
-    logger.info("update freq: ")
-    logger.info(update_freq)
+    # print("update freq: ", update_freq)
+    # logger.info("update freq: ")
+    # logger.info(update_freq)
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(fix_batches_to_gpus=args.fix_batches_to_gpus)
     itr = iterators.GroupedIterator(itr, update_freq)
@@ -217,7 +268,7 @@ def train(args, trainer, task, epoch_itr,):
         args, itr, epoch_itr.epoch, no_progress_bar='simple',
     )
     # progress = progress_bar.build_progress_bar(
-    #     args, itr, epoch_itr.epoch, no_progress_bar='none',default='none'
+        # args, itr, epoch_itr.epoch, no_progress_bar='none',default='none'
     # )
 
     extra_meters = collections.defaultdict(lambda: AverageMeter())
@@ -225,27 +276,33 @@ def train(args, trainer, task, epoch_itr,):
     max_update = args.max_update or math.inf
 
     epoch_acc = 0
+    epoch_loss = 0
     total_tokens = 0
     total_samples = len(progress)
     print("total sample: ", total_samples)
     logger.info("total sample: ")
     logger.info(total_samples)
     for i, samples in enumerate(progress, start=epoch_itr.iterations_in_epoch):
-        if i % 1000 == 0:
-            msg = "%d/%d"%(i, total_samples)
-            logger.info(msg)
+        # if i % 1000 == 0:
+        #     msg = "%d/%d"%(i, total_samples)
+        #     logger.info(msg)
         log_output = trainer.train_step(samples)
         if log_output is None:
             continue
         acc = log_output['acc']
+        nll_loss = log_output['nll_loss']
         valid_token_num = log_output['valid_token_num']
         epoch_acc += acc * valid_token_num
         total_tokens += valid_token_num
+        epoch_loss += nll_loss
         if valid_token_num == 0:
             print(samples['src_tokens'])
+        # print("train loss: ", log_output['nll_loss'])
+        # print("train loss: ", log_output['loss'])
 
         # log mid-epoch stats
         stats = get_training_stats(trainer)
+        # print(log_output)
         for k, v in log_output.items():
             if k in ['loss', 'nll_loss', 'ntokens', 'nsentences', 'sample_size']:
                 continue  # these are already logged above
@@ -260,19 +317,24 @@ def train(args, trainer, task, epoch_itr,):
         if i == 0:
             trainer.get_meter('wps').reset()
 
-        num_updates = trainer.get_num_updates()
-        if args.save_interval_updates > 0 and num_updates % args.save_interval_updates == 0 and num_updates > 0:
-            valid_losses = validate(args, trainer, task, epoch_itr, [first_valid])
-            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
+        # num_updates = trainer.get_num_updates()
+        # if args.save_interval_updates > 0 and num_updates % args.save_interval_updates == 0 and num_updates > 0:
+        #     valid_losses = validate(args, trainer, task, epoch_itr, [first_valid])
+        #     save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
 
-        if num_updates >= max_update:
-            break
+        # if num_updates >= max_update:
+        #     break
     
 
     epoch_acc /= total_tokens
+    epoch_loss /= len(progress)
     print("train acc: ", epoch_acc)
+    print("train loss: ", epoch_loss)
+
     logger.info("train acc: ")
     logger.info(epoch_acc)
+    logger.info("train loss: ")
+    logger.info(epoch_loss)
     # log end-of-epoch stats
     stats = get_training_stats(trainer)
     for k, meter in extra_meters.items():
@@ -286,6 +348,7 @@ def train(args, trainer, task, epoch_itr,):
         meter = trainer.get_meter(k)
         if meter is not None:
             meter.reset()
+    return epoch_acc, epoch_loss
 
 
 def get_training_stats(trainer):
@@ -334,7 +397,7 @@ def validate(args, trainer, task, epoch_itr, subsets):
         progress = progress_bar.build_progress_bar(
             args, itr, epoch_itr.epoch,
             prefix='valid on \'{}\' subset'.format(subset),
-            no_progress_bar='simple'
+            no_progress_bar='none',default='none'
         )
 
         # reset validation loss meters
@@ -462,9 +525,11 @@ def load_checkpoint(args, trainer, epoch_itr):
     return False
 
 
-def load_dataset_splits(task, splits,max_len = None, debug = False):
+def load_dataset_splits(task, splits,max_len = None, debug = False, bpe_tokenizer = None):
     for split in splits:
-        task.load_dataset(split, max_len = max_len, debug = debug)
+        task.load_dataset(split, max_len = max_len, debug = debug, bpe_tokenizer = bpe_tokenizer)
+
+
 
 
 if __name__ == '__main__':
@@ -482,6 +547,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type = int, default = 4)
     parser.add_argument('--update_freq', type = int, default = 1)
     parser.add_argument('--freeze_encoder', action='store_true')
+    parser.add_argument('--freeze_decoder', action='store_true')
+
     parser.add_argument('--debug', action = 'store_true')
     parser.add_argument('--max_len', type = int, default = 0)
     parser.add_argument('--restore_file', type = str, default = "checkpoint_best.pt")

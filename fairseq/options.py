@@ -291,7 +291,7 @@ def add_optimization_args(parser):
     group.add_argument('--sentence-avg', action='store_true',
                        help='normalize gradients by the number of sentences in a batch'
                             ' (default is to normalize by number of tokens)')
-    group.add_argument('--update-freq', default=[2], type = list,
+    group.add_argument('--update-freq', default=[1], type = list,
                        help='update parameters every N_i batches, when in epoch i')
 
     # Optimizer definitions can be found under fairseq/optim/
@@ -303,7 +303,7 @@ def add_optimization_args(parser):
                             ' (note: this may be interpreted differently depending on --lr-scheduler)')
     group.add_argument('--momentum', default=0.99, type=float, metavar='M',
                        help='momentum factor')
-    group.add_argument('--weight-decay', '--wd', default=0.0, type=float, metavar='WD',
+    group.add_argument('--weight-decay', '--wd', default=0.05, type=float, metavar='WD',
                        help='weight decay')
 
     # Learning rate schedulers can be found under fairseq/optim/lr_scheduler/
@@ -312,9 +312,9 @@ def add_optimization_args(parser):
                        help='Learning Rate Scheduler')
     group.add_argument('--lr-shrink', default=0.1, type=float, metavar='LS',
                        help='learning rate shrink factor for annealing, lr_new = (lr * lr_shrink)')
-    group.add_argument('--min-lr', default=1e-6, type=float, metavar='LR',
+    group.add_argument('--min-lr', default=1e-10, type=float, metavar='LR',
                        help='minimum learning rate')
-    group.add_argument('--min-loss-scale', default=1e-4, type=float, metavar='D',
+    group.add_argument('--min-loss-scale', default=5e-5, type=float, metavar='D',
                        help='minimum loss scale (for FP16 training)')
 
     return group
@@ -442,7 +442,7 @@ def add_model_args(parser):
 
     # Criterion definitions can be found under fairseq/criterions/
     # group.add_argument(
-    #     '--criterion', default='label_smoothed_cross_entropy', metavar='CRIT',
+    #     '--criterion', default='label_smoothed_cross_entropy_2', metavar='CRIT',
     #     choices=CRITERION_REGISTRY.keys(),
     #     help='Training Criterion',
     # )

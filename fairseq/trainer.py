@@ -251,12 +251,24 @@ class Trainer(object):
         return self._lr_scheduler
 
     def _build_optimizer(self):
-        params = list(
+        encoder_params = list(
             filter(
                 lambda p: p.requires_grad,
-                chain(self.model.parameters(), self.criterion.parameters()),
+                self.model.wav2vec_encoder.parameters(),
             )
         )
+        decoder_params = list(
+            filter(
+                lambda p: p.requires_grad,
+                self.model.bart_decoder.parameters(),
+            )
+        )
+
+        params = [
+            {"params": encoder_params, "lr": 1e-6},
+            {"params": decoder_params, "lr": 5e-5},
+            
+        ]
 
         if (
             self.cfg.distributed_training.ddp_backend == "fully_sharded"
@@ -327,6 +339,8 @@ class Trainer(object):
             self.optimizer,
         )
         self._lr_scheduler.step_update(0)
+        self.optimizer.param_groups[0]['lr'] = 1e-5
+        self.optimizer.param_groups[1]['lr'] = 1e-4
 
     def consolidate_optimizer(self):
         """For OSS, we need to consolidate the state dict."""

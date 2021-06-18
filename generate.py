@@ -17,6 +17,7 @@ from fairseq.sequence_generator import SequenceGenerator
 from fairseq.sequence_scorer import SequenceScorer
 from fairseq.tasks.multilingual_translation import MultilingualTranslationTask
 from fairseq.tasks.speech_to_text import SpeechToTextTask2
+from fairseq.data.encoders import gpt2_bpe
 
 
 def main(args):
@@ -25,7 +26,7 @@ def main(args):
     # model_path = ['./10_updates_encoder_freeze_checkpoints/checkpoint_last.pt']
     # model_path = ['./encoder_freeze_checkpoints/checkpoint_best.pt']
 
-    model_path = ['./noclip_nofreeze_1e-5/checkpoint10.pt']
+    model_path = ['./enc_freeze_1e-4/checkpoint2.pt']
 
     assert not args.sampling or args.nbest == args.beam, \
         '--sampling requires --nbest to be equal to --beam'
@@ -38,54 +39,34 @@ def main(args):
 
     use_cuda = torch.cuda.is_available() and not args.cpu
 
+
+    bpe_tokenizer = gpt2_bpe.GPT2BPE(gpt2_bpe.GPT2BPEConfig())
+
     # Load dataset splits
     tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
+    tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
     task = SpeechToTextTask2.setup_task(args, tgt_dict_path)
-    task.load_dataset(args.gen_subset)
+    task.load_dataset(args.gen_subset, bpe_tokenizer = bpe_tokenizer)
     print('| {} {} {} examples'.format(args.data, args.gen_subset, len(task.dataset(args.gen_subset))))
 
     # Set dictionaries
     tgt_dict = task.target_dictionary
 
     # Load ensemble
-    asr_model = task.build_model(args,vocab_size = 50000)
+    asr_model = task.build_model(args, vocab_size = len(tgt_dict))
     param_dict = torch.load(model_path[0])
     asr_model.load_state_dict(param_dict["model"])
     asr_model = asr_model.to('cuda')
     # print(asr_model)
     asr_model.eval()
     models = [asr_model]
-    # models, _ = checkpoint_utils.load_model_ensemble(model_path, task = task, arg_overrides=eval(args.model_overrides))
 
-    # Optimize ensemble for generation
-    # for model in models:
-    #     model.make_generation_fast_(
-    #         beamable_mm_beam_size=None if args.no_beamable_mm else args.beam,
-    #         need_attn=args.print_alignment,
-    #     )
-    #     if args.fp16:
-    #         model.half()
-    # if isinstance(task, MultilingualTranslationTask):
-    #     for i in range(len(models)):
-    #         models[i] = models[i].models[task.lang_pair]
 
-    # Load alignment dictionary for unknown word replacement
-    # (None if no unknown word replacement, empty if no path to align dictionary)
-    # align_dict = checkpoint_utils.load_align_dict(args.replace_unk)
-    align_dict = None
 
-    # Load dataset (possibly sharded)
-    models_max_positions = [model.max_positions() for model in models]
-    if isinstance(models_max_positions[0], dict):
-        new_max_positions = []
-        for max_p in models_max_positions:
-            for _, val in max_p.items():
-                new_max_positions += [val]
-        models_max_positions = new_max_positions
     itr = task.get_batch_iterator(
         dataset=task.dataset(args.gen_subset),
         max_tokens=args.max_tokens,
-        max_sentences=args.max_sentences,
+        max_sentences=1,
         max_positions=None,
         ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
         required_batch_size_multiple=8,
@@ -128,13 +109,10 @@ def main(args):
             target_tokens = target_tokens.int().cpu() if has_target else None
 
             # Either retrieve the original sentences or regenerate them from tokens.
-            if align_dict is not None:
-                # src_str = task.dataset(args.gen_subset).src.get_original_text(sample_id)
-                target_str = task.dataset(args.gen_subset).tgt.get_original_text(sample_id)
-            else:
-                # src_str = src_dict.string(src_tokens, args.remove_bpe)
-                if has_target:
-                    target_str = tgt_dict.string(target_tokens, args.remove_bpe, escape_unk=True)
+
+            # src_str = src_dict.string(src_tokens, args.remove_bpe)
+            if has_target:
+                target_str = bpe_tokenizer.bpe.decode(target_tokens,)
 
             if not args.quiet:
                 # print('S-{}\t{}'.format(sample_id, src_str))
@@ -188,5 +166,8 @@ def main(args):
 
 if __name__ == '__main__':
     parser = options.get_generation_parser()
+    parser.add_argument('--debug', action = 'store_true')
+
     args = options.parse_args_and_arch(parser)
+
     main(args)
