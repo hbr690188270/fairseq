@@ -10,7 +10,7 @@ from argparse import Namespace
 from torch.nn.modules.loss import CrossEntropyLoss
 
 from fairseq.data import Dictionary, encoders
-from fairseq.data.audio.speech_to_text_dataset import SpeechToTextDataset2,SpeechToTextDataset_En, SpeechToTextDataset_ENBart
+from fairseq.data.audio.speech_to_text_dataset import SpeechToTextDataset2,SpeechToTextDataset_En, SpeechToTextDataset_ENBart, SpeechToTextDataset_ENBart_prev
 from fairseq.tasks import LegacyFairseqTask, register_task
 from fairseq.models.speech_to_text.wav_bart import ASRModel, ASRModel_lstm_decoder, ASRModel_transformer_decoder, ASRModel_v2
 import pickle
@@ -204,6 +204,11 @@ class SpeechToTextTask2(LegacyFairseqTask):
         return label_smoothed_cross_entropy.LabelSmoothedCrossEntropyCriterion(self, sentence_avg = False)
         # return cross_entropy.CrossEntropyCriterion2(self, sentence_avg = False)
 
+    def load_dataset_prev(self, split, max_len = None, debug = False, max_frames = None, bpe_tokenizer = None):
+        is_train_split = split.startswith("train")
+        self.datasets[split] = SpeechToTextDataset_ENBart_prev(split = split,tgt_dict = self.tgt_dict, 
+                            max_len = None, debug = debug, max_frames = max_frames, bpe_tokenizer = bpe_tokenizer)                            
+
     def load_dataset(self, split, max_len = None, debug = False, max_frames = None, bpe_tokenizer = None):
         is_train_split = split.startswith("train")
         # pre_tokenizer = self.build_tokenizer(self.args)
@@ -211,10 +216,10 @@ class SpeechToTextTask2(LegacyFairseqTask):
         # self.datasets[split] = SpeechToTextDataset2(split = split,tgt_dict = self.tgt_dict, 
         #                     max_len = None, debug = debug, max_frames = max_frames)
         # self.datasets[split] = SpeechToTextDataset_En(split = split,tgt_dict = self.tgt_dict, 
-                            # max_len = None, debug = debug, max_frames = max_frames)
+        #                     max_len = None, debug = debug, max_frames = max_frames)
+
         self.datasets[split] = SpeechToTextDataset_ENBart(split = split,tgt_dict = self.tgt_dict, 
                             max_len = None, debug = debug, max_frames = max_frames, bpe_tokenizer = bpe_tokenizer)                            
-
 
 
     @property

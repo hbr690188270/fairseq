@@ -284,8 +284,8 @@ class ASRModel(nn.Module):
 
 class ASRModel_v2(nn.Module):
     def __init__(self, wav2vec2_model_type = 'wav2vec2.base',bart_model_type = 'bart.base', 
-                    wav2vec2_cache_dir = '/data1/private/houbairu/model_cache/wav2vec_model/',
-                    bart_model_cache_dir = '/data1/private/houbairu/model_cache/bart_model/',
+                    wav2vec2_cache_dir = '/data/private/houbairu/model_cache/wav2vec_model/',
+                    bart_model_cache_dir = '/data/private/houbairu/model_cache/bart_model/',
                     word_dictionary = None,
                     wav2vec2_output_dim = 768, bart_hidden_dim = 768,
                     decode_max_length = 50,
@@ -336,7 +336,7 @@ class ASRModel_v2(nn.Module):
         '''
         return: fairseq.models.TransformerDecoder
         '''
-        bart = BARTModel.from_pretrained('/data1/private/houbairu/model_cache/bart_model/bart.base/', checkpoint_file='model.pt')
+        bart = BARTModel.from_pretrained('/data/private/houbairu/model_cache/bart_model/bart.base/', checkpoint_file='model.pt')
         # print(bart.model)
         # print(type(bart.model))
         bart_model = bart.model.decoder

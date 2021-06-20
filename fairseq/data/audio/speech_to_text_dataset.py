@@ -736,7 +736,7 @@ class SpeechToTextDataset_En(FairseqDataset):
     def __init__(
         self,
         split = 'train',
-        audio_paths = '/data1/private/houbairu/audio_dataset/librispeech/',
+        audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
         # n_frames = 15.6*16000,
         max_frames = int(10*16000),
         tgt_dict = None,
@@ -923,6 +923,197 @@ class SpeechToTextDataset_En(FairseqDataset):
         return self.n_frames[index]
         # return (self.n_frames[index], len(self.tgt_texts[index].split()))
 
+class SpeechToTextDataset_ENBart_prev(FairseqDataset):
+    LANG_TAG_TEMPLATE = "<lang:{}>"
+
+    def __init__(
+        self,
+        split = 'train',
+        audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
+        # n_frames = 15.6*16000,
+        max_frames = int(10*16000),
+        tgt_dict = None,
+        prepend_bos = False,
+        max_len = 50,    ## 生成文本的最大长度，默认pad到50
+        debug = False,
+        bpe_tokenizer = None,
+    ):
+        '''
+        use tgt dict to tokenize the text output
+        '''
+
+        self.split =split
+        self.audio_file_prefix = audio_paths + self.split + '/audiofiles/'
+        self.text_file = audio_paths + self.split + '/' + self.split + '.en'
+        self.meta_file = audio_paths + self.split + '/alignments.meta'
+        self.tgt_dict = tgt_dict
+        self.max_frames = max_frames
+        self.audio_name_list, self.tgt_texts, self.n_frames = self.read_sound_file(debug = debug)
+        self.pre_tokenizer = None
+        self.bpe_tokenizer = bpe_tokenizer
+        self.prepend_bos = prepend_bos
+        self.max_len = max_len
+        # self.max_len = None
+
+        if self.split == 'train':
+            self.shuffle = True
+        else:
+            self.shuffle = False
+        self.n_samples = len(self.tgt_texts)
+        print(self.n_samples)
+        # self.n_frames = self.audio_list ### n_frames应该是每个audio的time step数量，后续需要修正
+
+    def read_sound_file(self,debug = False):
+        print("reading sound file...")
+        audio_name_list = []
+        audio_list = []
+        fr_text_list = []
+        audio_length_list = []
+
+        count = 0
+        with open(self.meta_file,'r',encoding = 'utf-8') as f:
+            next(f)
+            for line in f:
+                book_id, chap_id, reader_id, _, audio_name, duration = line.strip().split('\t',5)
+                audio_name_list.append(audio_name)
+
+        count = 0
+        with open(self.text_file, 'r', encoding = 'utf-8') as f:
+            for line in f:
+                count += 1
+                # text = line.strip().split()
+                text = line.strip()
+                fr_text_list.append(text)
+
+        if debug:
+            read_num = 100
+        else:
+            read_num = len(audio_name_list)
+        for i in range(len(audio_name_list[:read_num])):
+            audio_name = audio_name_list[i]
+            file_path = self.audio_file_prefix + audio_name + '.wav'
+            audio_input, sample_rate = sf.read(file_path)
+            audio_length_list.append(len(audio_input))
+            del audio_input
+        print(len(fr_text_list), len(audio_length_list))
+        return audio_name_list[:read_num], fr_text_list[:read_num], np.array(audio_length_list)[:read_num]
+        # return audio_name_list[:1000], fr_text_list[:1000], np.array(audio_length_list[:1000])
+        # return audio_name_list[:10], fr_text_list[:10], np.array(audio_length_list[:10])
+
+
+    def tokenize_text(self, text: str):
+        if self.pre_tokenizer is not None:
+            text = self.pre_tokenizer.encode(text)
+        text = text.lower()
+        if self.bpe_tokenizer is not None:
+            id_tensor = self.bpe_tokenizer.bpe.encode(text)
+            id_tensor += [self.tgt_dict.eos()]
+
+        return torch.IntTensor(id_tensor).long()
+
+    def __getitem__(
+        self, index: int
+    ) -> Tuple[int, torch.Tensor, Optional[torch.Tensor]]:
+
+        audio_name = self.audio_name_list[index]
+        file_path = self.audio_file_prefix + audio_name + '.wav'
+        audio_input, sample_rate = sf.read(file_path)
+        audio_input = torch.tensor(audio_input)
+        source = (audio_input - torch.mean(audio_input)) / torch.sqrt(torch.var(audio_input) + 1e-5)
+        # source = torch.tensor(audio_input)
+
+        target = None
+        if self.tgt_texts is not None:
+            target = self.tokenize_text(self.tgt_texts[index])
+
+        # print(target)
+        return index, source, target
+
+    def __len__(self):
+        return self.n_samples
+
+    def collater(self, samples: List[Tuple[int, torch.Tensor, torch.Tensor]]) -> Dict:
+        if len(samples) == 0:
+            return {}
+        indices = torch.tensor([i for i, _, _ in samples], dtype=torch.long)
+        frames, pad_masks = _collate_frames2(
+            [s for _, s, _ in samples], is_audio_input = True, max_len = self.max_frames
+        )
+        # sort samples by descending number of frames
+        n_frames = torch.tensor([s.size(0) for _, s, _ in samples], dtype=torch.long)
+        n_frames, order = n_frames.sort(descending=True)
+        indices = indices.index_select(0, order)
+        frames = frames.index_select(0, order)
+        pad_masks = pad_masks.index_select(0, order)
+
+        target, target_lengths = None, None
+        prev_output_tokens = None
+        ntokens = None
+        if self.tgt_texts is not None:
+            target = fairseq_data_utils.collate_tokens(
+                [t for _, _, t in samples],
+                self.tgt_dict.pad(),
+                self.tgt_dict.eos(),
+                left_pad=False,
+                move_eos_to_beginning=False,
+                pad_to_length= self.max_len,
+            )
+            target = target.index_select(0, order)
+            target_lengths = torch.tensor(
+                [t.size(0) for _, _, t in samples], dtype=torch.long
+            ).index_select(0, order)
+            prev_output_tokens = fairseq_data_utils.collate_tokens(
+                [t for _, _, t in samples],
+                self.tgt_dict.pad(),
+                self.tgt_dict.eos(),
+                left_pad=False,
+                move_eos_to_beginning=True,
+                pad_to_length = self.max_len,
+            )
+            prev_output_tokens = prev_output_tokens.index_select(0, order)
+            ntokens = sum(t.size(0) for _, _, t in samples)
+
+        out = {
+            "id": indices,
+            "net_input": {
+                "src_tokens": frames,
+                'pad_masks': pad_masks,
+                "src_lengths": n_frames,
+                "prev_output_tokens": prev_output_tokens,
+            },
+            "target": target,
+            "target_lengths": target_lengths,
+            "ntokens": ntokens,
+            "nsentences": len(samples),
+        }
+        return out
+
+    def ordered_indices(self):
+        if self.shuffle:
+            order = [np.random.permutation(len(self))]
+        else:
+            order = [np.arange(len(self))]
+        # first by descending order of # of frames then by original/random order
+        order.append([-n for n in self.n_frames])
+        # print(order)
+        return np.lexsort(order)
+        # return order
+
+    def num_tokens(self, index):
+        """Return the number of tokens in a sample. This value is used to
+        enforce ``--max-tokens`` during batching."""
+        return self.n_frames[index]
+
+    def num_tokens_vec(self, indices):
+        """Return the number of tokens for a set of positions defined by indices.
+        This value is used to enforce ``--max-tokens`` during batching."""
+        int_indices = indices.astype(np.int32)
+        return self.n_frames[indices]
+
+    def size(self, index):
+        return self.n_frames[index]
+        # return (self.n_frames[index], len(self.tgt_texts[index].split()))
+
 
 class SpeechToTextDataset_ENBart(FairseqDataset):
     LANG_TAG_TEMPLATE = "<lang:{}>"
@@ -930,7 +1121,7 @@ class SpeechToTextDataset_ENBart(FairseqDataset):
     def __init__(
         self,
         split = 'train',
-        audio_paths = '/data1/private/houbairu/audio_dataset/librispeech/',
+        audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
         # n_frames = 15.6*16000,
         max_frames = int(10*16000),
         tgt_dict = None,

@@ -318,11 +318,7 @@ class SequenceGenerator(nn.Module):
         else:
             original_batch_idxs = torch.arange(0, bsz).type_as(tokens)
 
-        print("target: ", target)
-        prev_output_tokens = torch.ones_like(target)
-        prev_output_tokens[0,:] = target[-1,:]
-        prev_output_tokens[1:,:] = target[:-1, :]
-        prev_output_tokens = prev_output_tokens.to("cuda")
+        # print("max len: ", max_len)
         for step in range(max_len + 1):  # one extra step for EOS marker
             # print("step: ", step)
 
@@ -333,7 +329,6 @@ class SequenceGenerator(nn.Module):
                 encoder_outs,
                 incremental_states,
                 self.temperature,
-                prev_output_tokens
             )
             # print(lprobs.size())
             # print(torch.argmax(lprobs, dim = -1))
@@ -787,7 +782,6 @@ class EnsembleModel(nn.Module):
         encoder_outs: List[Dict[str, List[Tensor]]],
         incremental_states: List[Dict[str, Dict[str, Optional[Tensor]]]],
         temperature: float = 1.0,
-        prev_output_tokens = None
     ):
         log_probs = []
         avg_attn: Optional[Tensor] = None
@@ -805,21 +799,21 @@ class EnsembleModel(nn.Module):
                 )
             else:
                 # decoder_out = model.bart_decoder(tokens, encoder_out=encoder_out, prev_output_tokens = prev_output_tokens)
-                decoder_out = model.bart_decoder(encoder_out=encoder_out, prev_output_tokens = prev_output_tokens[:,0,:])
+                decoder_out = model.bart_decoder(encoder_out=encoder_out, prev_output_tokens = tokens)
 
 
             attn: Optional[Tensor] = None
             
             probs = decoder_out[0]
-            print(probs.size())
-            print(torch.argmax(probs, dim = -1))
+            # print(probs.size())
+            # print(torch.argmax(probs, dim = -1))
             probs = probs[:, -1:, :].div_(temperature)
 
             probs = model.get_normalized_probs(
                 probs, log_probs=True, sample=None
             )
             # print(torch.argmax(probs, dim = -1))
-            print()
+            # print()
             probs = probs[:, -1, :]
             # pause = input("prob2")
             # print("output: ", torch.argmax(probs, dim = -1))

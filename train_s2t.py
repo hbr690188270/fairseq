@@ -119,6 +119,10 @@ def main(args):
     print("loading model....")
     logger.info("loading model....")
     model = task.build_model(args, vocab_size = vocab_size)
+    model_path = './bart_1e-5/checkpoint_best.pt'
+    param_dict = torch.load(model_path)
+    model.load_state_dict(param_dict["model"])
+    model = model.to('cuda')
     print("vocab size: ", model.bart_decoder.embed_tokens.weight.size())
 
     print("model loaded!  ")
@@ -128,18 +132,6 @@ def main(args):
     print('| num. model params: {}'.format(sum(p.numel() for p in model.parameters())))
 
     # if args['freeze_encoder']:
-
-    if args.freeze_encoder:
-        logger.info("freeze encoder...")
-        print("freeze encoder parameters...")
-        for p in model.wav2vec_encoder.parameters():
-            p.requires_grad = False
-
-    if args.freeze_decoder:
-        logger.info("freeze decoder...")
-        print("freeze encoder parameters...")
-        for p in model.bart_decoder.parameters():
-            p.requires_grad = False
 
     max_positions = None
 
@@ -172,16 +164,6 @@ def main(args):
         shard_id=args.distributed_rank,
     )
 
-    # Load the latest checkpoint if one is available
-    # load_checkpoint(args, trainer, epoch_itr)
-    # if not load_checkpoint(args, trainer, epoch_itr):
-    #     trainer.dummy_train_step([dummy_batch])
-
-    #Freeze encoder weights if requested
-
-    # Train until the learning rate gets too small
-    # max_epoch = args.max_epoch or math.inf
-    # max_update = args.max_update or math.inf
     max_epoch = 20
     # max_update = math.inf
 
@@ -197,55 +179,16 @@ def main(args):
     acc_list = []
     loss_list = []
     # while lr > args.min_lr and epoch_itr.epoch < max_epoch and trainer.get_num_updates() < max_update:
-    while epoch_itr.epoch < max_epoch:
-
-        # train for one epoch
-        print("epoch: ", epoch_itr.epoch)
-        logger.info("epoch: ")
-        logger.info(epoch_itr.epoch)
-        print("lr: ", [x['lr'] for x in trainer.optimizer.param_groups])
-        acc, loss = train(args, trainer, task, epoch_itr)
-        acc_list.append(acc)
-        loss_list.append(loss)
-
-        if epoch_itr.epoch > 15:
-            trainer.optimizer.param_groups[0]['lr'] = 1e-6
-            trainer.optimizer.param_groups[1]['lr'] = 1e-5
-
-        # if epoch_itr.epoch > 100:
-        #     trainer.optimizer.param_groups[0]['lr'] = 1e-8
-        #     trainer.optimizer.param_groups[1]['lr'] = 5e-7
-
-        # if epoch_itr.epoch > 150:
-        #     trainer.optimizer.param_groups[0]['lr'] = 1e-8
-        #     trainer.optimizer.param_groups[1]['lr'] = 1e-7
-
-        # if epoch_itr.epoch > 200:
-        #     trainer.optimizer.param_groups[0]['lr'] = 1e-9
-        #     trainer.optimizer.param_groups[1]['lr'] = 1e-8
 
 
-        if epoch_itr.epoch % args.validate_interval == 0:
-            print("validating...")
-            logger.info("validating...")
-            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
-            logger.info("valid loss: ")
-            logger.info(valid_losses)
-            print("valid loss: ", valid_losses)
 
-        # save checkpoint
-        if epoch_itr.epoch % 2 == 0:
-            save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
-        print()
-        logger.info("")
-    train_meter.stop()
-    print('| done training in {:.1f} seconds'.format(train_meter.sum))
-    logger.info('| done training in {:.1f} seconds'.format(train_meter.sum))
-    with open(log_file + "_acc.txt",'w', encoding = 'utf-8') as f:
-        f.write(' '.join([str(x) for x in acc_list]))
+    print("validating...")
+    logger.info("validating...")
+    valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+    logger.info("valid loss: ")
+    logger.info(valid_losses)
+    print("valid loss: ", valid_losses)
 
-    with open(log_file + "_loss.txt",'w', encoding = 'utf-8') as f:
-        f.write(' '.join([str(x) for x in loss_list]))
 
 
 def train(args, trainer, task, epoch_itr,):
