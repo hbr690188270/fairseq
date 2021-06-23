@@ -251,28 +251,6 @@ def _collate_frames2(
     return out, pad
 
 
-def _collate_frames3(
-    frames: List[torch.Tensor], is_audio_input: bool = True, max_len = None
-) -> torch.Tensor:
-    """
-    Convert a list of 2D frames into a padded 3D tensor
-    Args:
-        frames (list): list of 2D frames of size L[i]*f_dim. Where L[i] is
-            length of i-th frame and f_dim is static dimension of features
-    Returns:
-        3D tensor of size len(frames)*len_max*f_dim where len_max is max of L[i]
-    """
-    if max_len == None:
-        max_len = max(frame.size(0) for frame in frames)
-    if is_audio_input:
-        out = frames[0].new_zeros((len(frames), max_len))
-    else:
-        out = frames[0].new_zeros((len(frames), max_len, frames[0].size(1)))
-    for i, v in enumerate(frames):
-        out[i, : min([max_len, v.size(0)])] = v[:min([max_len, v.size(0)])]
-    return out
-
-
 class SpeechToTextDataset(FairseqDataset):
     LANG_TAG_TEMPLATE = "<lang:{}>"
 
@@ -1121,7 +1099,7 @@ class SpeechToTextDataset_ENBart(FairseqDataset):
     def __init__(
         self,
         split = 'train',
-        audio_paths = '/data/private/houbairu/audio_dataset/librispeech/',
+        audio_paths = '/data1/private/houbairu/audio_dataset/librispeech/',
         # n_frames = 15.6*16000,
         max_frames = int(10*16000),
         tgt_dict = None,

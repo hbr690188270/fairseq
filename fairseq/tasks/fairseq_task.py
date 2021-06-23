@@ -480,6 +480,8 @@ class FairseqTask(object):
         
         # print("loss: ", loss)
         # print("grad: ", model.bart_decoder.output_projection.weight.grad.norm())
+        # print("grad: ", model.bart_decoder.fc_out.weight.grad.norm())
+
         # print()
         # print("grad: ")
         # grad_list = []

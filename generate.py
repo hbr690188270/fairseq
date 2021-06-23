@@ -21,13 +21,13 @@ from fairseq.tasks.multilingual_translation import MultilingualTranslationTask
 from fairseq.tasks.speech_to_text import SpeechToTextTask2
 from fairseq.data.encoders import gpt2_bpe
 import edit_distance
-
+from fairseq.models.speech_to_text.wav_bart import ASRModel_v2, BART_Tokenizer
 
 def main(args):
 
     # model_path = ['./bart_1e-4/checkpoint_best.pt']
     # model_path = ['./bart_1e-5/checkpoint_best.pt']
-    model_path = ['./enc_freeze_1e-4/checkpoint_best.pt']
+    model_path = ['./pretrain_bart_1e-5/checkpoint_best.pt']
 
 
     assert not args.sampling or args.nbest == args.beam, \
@@ -42,22 +42,28 @@ def main(args):
     use_cuda = torch.cuda.is_available() and not args.cpu
 
 
-    bpe_tokenizer = gpt2_bpe.GPT2BPE(gpt2_bpe.GPT2BPEConfig())
 
     # Load dataset splits
     # tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
-    tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
+    tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
     task = SpeechToTextTask2.setup_task(args, tgt_dict_path)
     if args.debug:
         debug = True
     else:
         debug = False
-    task.load_dataset_prev("test", bpe_tokenizer = bpe_tokenizer, debug = debug)
+    
+    bpe_tokenizer = gpt2_bpe.GPT2BPE(gpt2_bpe.GPT2BPEConfig())
+    tgt_dict = task.target_dictionary
+    bart_tokenizer = BART_Tokenizer(bpe_tokenizer, tgt_dict)
+    
+
+
+    # task.load_dataset_prev("test", bpe_tokenizer = bpe_tokenizer, debug = debug)
+    task.load_dataset("test", max_len = 100, debug = debug, bpe_tokenizer = bart_tokenizer)
     # print('| {} {} {} examples'.format(args.data, "test", len(task.dataset("test"))))
     print('|{} {} examples'.format("test", len(task.dataset("test"))))
 
     # Set dictionaries
-    tgt_dict = task.target_dictionary
 
     # Load ensemble
     asr_model = task.build_model(args, vocab_size = len(tgt_dict))
@@ -125,7 +131,8 @@ def main(args):
             # src_str = src_dict.string(src_tokens, args.remove_bpe)
             if has_target:
                 # print(target_tokens.view(-1).numpy())
-                target_str = bpe_tokenizer.bpe.decode(list(target_tokens.view(-1).numpy())[:-1],)
+                # target_str = bpe_tokenizer.bpe.decode(list(target_tokens.view(-1).numpy())[:-1],)
+                target_str = bart_tokenizer.decode(target_tokens.view(-1))
 
             if not args.quiet:
                 # print('S-{}\t{}'.format(sample_id, src_str))
@@ -143,7 +150,9 @@ def main(args):
                 #     remove_bpe=args.remove_bpe,
                 # )
                 hypo_tokens=hypo['tokens'].int().cpu()
-                hypo_str = bpe_tokenizer.bpe.decode(list(hypo_tokens.view(-1).numpy())[:-1],)
+                # hypo_str = bpe_tokenizer.bpe.decode(list(hypo_tokens.view(-1).numpy())[:-1],)
+                hypo_str = bart_tokenizer.decode(hypo_tokens.view(-1))
+
                 alignment = None
                 if not args.quiet:
                     print('H-{}\t{}'.format(sample_id, hypo_str))
