@@ -18,6 +18,7 @@ from fairseq.data.audio.speech_to_text_dataset import (
     S2TDataConfig,
     SpeechToTextDataset,
     SpeechToTextDatasetCreator,
+    SpeechToTextDataset_libri_15,
     get_features_or_waveform
 )
 from fairseq.tasks import LegacyFairseqTask, register_task
@@ -344,7 +345,9 @@ class SpeechToTextTask2(LegacyFairseqTask):
         # self.datasets[split] = SpeechToTextDataset_En(split = split,tgt_dict = self.tgt_dict, 
         #                     max_len = None, debug = debug, max_frames = max_frames)
 
-        self.datasets[split] = SpeechToTextDataset_ENBart(split = split,tgt_dict = self.tgt_dict, 
+        # self.datasets[split] = SpeechToTextDataset_ENBart(split = split,tgt_dict = self.tgt_dict, 
+        #                     max_len = None, debug = debug, max_frames = max_frames, bpe_tokenizer = bpe_tokenizer)                            
+        self.datasets[split] = SpeechToTextDataset_libri_15(split = split,tgt_dict = self.tgt_dict, 
                             max_len = None, debug = debug, max_frames = max_frames, bpe_tokenizer = bpe_tokenizer)                            
 
 

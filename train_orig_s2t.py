@@ -56,8 +56,12 @@ logger.setLevel(logging.INFO)
 # fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
 
 
-log_file = "test"
+log_file = "orig_pretrain_bart_1e-4"
 fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
+
+
+# log_file = "test"
+# fh = logging.FileHandler("logs/" + log_file + ".txt", mode='w')
 
 logger.addHandler(fh)
 
@@ -87,7 +91,7 @@ def main(args):
     # Setup task, e.g., translation, language modeling, etc.
     # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
     # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_en_dictionary.pkl'
-    tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
+    tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
 
     task = SpeechToTextTask2.setup_task(args, tgt_dict_path)
     tgt_dict = task.tgt_dict
@@ -119,10 +123,10 @@ def main(args):
     print("loading model....")
     logger.info("loading model....")
     model = task.build_model(args, vocab_size = vocab_size)
-    model_path = './bart_1e-5/checkpoint_best.pt'
+    model_path = './pretrain_bart_1e-4/checkpoint_best.pt'
     param_dict = torch.load(model_path)
     model.load_state_dict(param_dict["model"])
-    # model = model.to('cuda')
+    model = model.to('cuda')
     print("vocab size: ", model.bart_decoder.embed_tokens.weight.size())
 
     print("model loaded!  ")
@@ -189,6 +193,8 @@ def main(args):
     valid_subsets = args.valid_subset.split(',')
     acc_list = []
     loss_list = []
+    valid_acc_list = []
+    valid_loss_list = []
     while epoch_itr.epoch < max_epoch:
 
         # train for one epoch
@@ -220,10 +226,12 @@ def main(args):
         if epoch_itr.epoch % args.validate_interval == 0:
             print("validating...")
             logger.info("validating...")
-            valid_losses = validate(args, trainer, task, epoch_itr, valid_subsets)
+            valid_losses, valid_acc = validate(args, trainer, task, epoch_itr, valid_subsets)
             logger.info("valid loss: ")
             logger.info(valid_losses)
             print("valid loss: ", valid_losses)
+            valid_acc_list.append(valid_acc)
+            valid_loss_list.append(valid_losses[0].cpu().detach().item())
 
         # save checkpoint
         if epoch_itr.epoch % 2 == 0:
@@ -233,12 +241,17 @@ def main(args):
     train_meter.stop()
     print('| done training in {:.1f} seconds'.format(train_meter.sum))
     logger.info('| done training in {:.1f} seconds'.format(train_meter.sum))
-    with open(log_file + "_acc.txt",'w', encoding = 'utf-8') as f:
+    with open("train_process/" + log_file + "_train_acc.txt",'w', encoding = 'utf-8') as f:
         f.write(' '.join([str(x) for x in acc_list]))
 
-    with open(log_file + "_loss.txt",'w', encoding = 'utf-8') as f:
+    with open("train_process/" + log_file + "_train_loss.txt",'w', encoding = 'utf-8') as f:
         f.write(' '.join([str(x) for x in loss_list]))
 
+    with open("train_process/" + log_file + "_valid_acc.txt",'w', encoding = 'utf-8') as f:
+        f.write(' '.join([str(x) for x in acc_list]))
+
+    with open("train_process/" + log_file + "_valid_loss.txt",'w', encoding = 'utf-8') as f:
+        f.write(' '.join([str(x) for x in loss_list]))
 
 
 
@@ -428,7 +441,7 @@ def validate(args, trainer, task, epoch_itr, subsets):
     print("valid acc: ", epoch_acc)
     logger.info("valid acc: ")
     logger.info(epoch_acc)
-    return valid_losses
+    return valid_losses, epoch_acc
 
 
 def get_valid_stats(trainer):

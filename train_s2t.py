@@ -87,7 +87,7 @@ def main(args):
     # Setup task, e.g., translation, language modeling, etc.
     # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_fr_dictionary.pkl'
     # tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/fairseq_en_dictionary.pkl'
-    tgt_dict_path = '/data1/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
+    tgt_dict_path = '/data/private/houbairu/audio_dataset/librispeech/aux_files/bart_decoder_dictionary.pkl'
 
     task = SpeechToTextTask2.setup_task(args, tgt_dict_path)
     tgt_dict = task.tgt_dict
@@ -119,9 +119,9 @@ def main(args):
     print("loading model....")
     logger.info("loading model....")
     model = task.build_model(args, vocab_size = vocab_size)
-    model_path = './bart_1e-5/checkpoint_best.pt'
-    param_dict = torch.load(model_path)
-    model.load_state_dict(param_dict["model"])
+    # model_path = './bart_1e-5/checkpoint_best.pt'
+    # param_dict = torch.load(model_path)
+    # model.load_state_dict(param_dict["model"])
     # model = model.to('cuda')
     print("vocab size: ", model.bart_decoder.embed_tokens.weight.size())
 
